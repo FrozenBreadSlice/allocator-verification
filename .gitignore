@@ -1,0 +1,14 @@
+# Rocq ignores
+*.vo
+*.vos
+*.vok
+*.glob
+
+# C ignore
+*.o
+*.out
+
+# Misc ignores
+NOTES.md
+TODO.md
+project.md

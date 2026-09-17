@@ -18,8 +18,7 @@
     - blocks are smallest unit and given to user
 */
 
-//TODO(Ben): try adding another size class
-//TODO(Ben): for now we have one single block size / size class
+//TODO(Ben): try adding another size class, (now we have one single block size / size class)
 //TODO(Ben): check if arbitrary removal is only for full queue! (sm_page_queue_remove)
 //  In our implementation only the full queue needs it
 //  make full queue a list / different type
@@ -72,11 +71,9 @@ typedef struct sm_block_s {
 */
 typedef struct sm_page_t {
     u8 segment_idx;         //index in meta data pages array in segment
-    bool segment_in_use;    //segment allocated this page
     bool in_full;           //page is in full bin
     u16 capacity;           //number for blocks commited (to freelist)
     u16 reserved;           //total number of blocks in this page
-    u16 used;               //num blocks used
     sm_block_t* free;       //free-list blocks, allocation (thread-local)
     sm_block_t* local_free; //free-list blocks, freeing (thread-local)
     size_t block_size;      //size of blocks
@@ -107,12 +104,15 @@ typedef struct {
     size_t block_size;
 } sm_page_queue_t;
 
-//+1 becuase last index is for the 'full page' queue
-//also mimalloc calls these things queues but they are really just lists
-//since arbitrary removal is used, but things are only pushed to the front
+typedef sm_page_queue_t sm_full_list_t;
+
+//In mimalloc, it uses SM_N_SIZE_CLASSES + 1 page queues, where the last on 
+//is the full list, the full list needs to support arbitrary removal
+//whereas the page queues are really FIFO queues.
 typedef struct sm_heap_t {
     sm_segment_t *first;
-    sm_page_queue_t page_qs[SM_N_SIZE_CLASSES + 1]; 
+    sm_page_queue_t page_qs[SM_N_SIZE_CLASSES]; 
+    sm_full_list_t full_list;
 } sm_heap_t;
 
 sm_heap_t global_heap = {0};
@@ -176,10 +176,10 @@ void sm_segment_remove (sm_segment_t **head, sm_segment_t *seg) {
     seg->prev = NULL;
 }
 
-//for page queues in heap
+//for page queues and full list in heap
 u8 sm_bin (size_t size) {
     if (size > SM_BLOCK_SIZE) {
-        return SM_N_SIZE_CLASSES + 1;
+        return SM_N_SIZE_CLASSES;
     }
     return 0;
 }
@@ -194,28 +194,32 @@ ssize_t sm_bin_to_size (u8 bin) {
 void sm_page_queue_enqueue (sm_page_queue_t *queue, sm_page_t *page_md) { 
     page_md->next = queue->first;
     page_md->prev = NULL;
-    if (queue->first) { //queue not empty
+    if (queue->first) {
         queue->first->prev = page_md;
         queue->first = page_md;
     } else {
         queue->first = page_md; 
         queue->last = page_md;
     }
-    //in mimalloc: 
-    //heap is also passed and you have page->heap = heap 
-    ///and heap->page_count++;
 }
 
-//NOTE: for full bin queue we need arbitrary removal, so not a queue
-void sm_page_queue_remove (sm_page_queue_t *queue, sm_page_t *page_md) {
+//NOTE: for full list we need arbitrary removal, so not a queue
+void sm_full_list_remove (sm_full_list_t *list, sm_page_t *page_md) {
     if (page_md->prev != NULL) page_md->prev->next = page_md->next;
     if (page_md->next != NULL) page_md->next->prev = page_md->prev;
-    if (page_md == queue->last) queue->last = page_md->prev;
-    if (page_md == queue->first) queue->first = page_md->next;
+    if (page_md == list->last) list->last = page_md->prev;
+    if (page_md == list->first) list->first = page_md->next;
     page_md->next = NULL;
     page_md->prev = NULL;
-    //mimalloc also sets page_md->heap to NULL
 }
+
+//NOTE: we implement it in terms of arbitary removal for now
+sm_page_t *sm_page_queue_dequeue (sm_page_queue_t *queue) {
+    sm_page_t *last = queue->last;
+    sm_full_list_remove(queue, last);
+    return last;
+}
+
 
 
 /*
@@ -285,7 +289,6 @@ bool sm_page_is_first_of_segment (sm_segment_t *segment, sm_page_t *page_md) {
 
 bool sm_page_init (sm_heap_t *heap, sm_page_t *page_md, size_t block_size, size_t idx) {
     page_md->segment_idx = idx; //mi_page_init doesn't set this one, for some reason 
-    page_md->segment_in_use = false;
     page_md->in_full = false;
     page_md->capacity = 0;
     
@@ -298,7 +301,6 @@ bool sm_page_init (sm_heap_t *heap, sm_page_t *page_md, size_t block_size, size_
         page_md->reserved = SM_PAGE_SIZE / block_size;
     }
     
-    page_md->used = 0;
     page_md->free = NULL;
     page_md->local_free = NULL;
     page_md->block_size = block_size;
@@ -340,28 +342,23 @@ void sm_page_extend_free (sm_page_t *page_md) {
 //_mi_page_unfull
 void sm_page_to_class (sm_page_t *page_md) {
     SMASSERT(page_md->in_full)
-
     sm_heap_t *heap = page_md->heap; 
-    sm_page_queue_t *fullq = &heap->page_qs[SM_N_SIZE_CLASSES]; //full bin
 
     //calculate queue from heap and page
     sm_page_queue_t *toq = &heap->page_qs[sm_bin(page_md->block_size)];    
-    //remove from one queue add to another
-    sm_page_queue_remove(fullq, page_md); 
+    
+    //remove from full_list add to toq 
+    sm_full_list_remove(&heap->full_list, page_md); 
     page_md->in_full = false;
     sm_page_queue_enqueue(toq, page_md);
 }
 
-//could unify with above, but here we know queue
-void sm_page_to_full (sm_page_t *page_md, sm_page_queue_t *queue) {
+void sm_page_to_full (sm_page_queue_t *queue) {
+    sm_page_t *page_md = sm_page_queue_dequeue(queue); 
+    sm_heap_t *heap = page_md->heap; 
     SMASSERT(!page_md->in_full)
 
-    sm_heap_t *heap = page_md->heap; 
-    sm_page_queue_t *fullq = &heap->page_qs[SM_N_SIZE_CLASSES]; //full bin
-
-    //remove from one queue add to another
-    sm_page_queue_remove(queue, page_md); 
-    sm_page_queue_enqueue(fullq, page_md);
+    sm_page_queue_enqueue(&heap->full_list, page_md);
     page_md->in_full = true;
 }
 
@@ -393,11 +390,10 @@ void *sm_heap_malloc (sm_heap_t *heap, size_t size) {
     //NOTE: fail if trying to allocate more then biggest size class
     //  mimalloc's largest size class is approximatly the segment size 
     //  for larger allocations it will just OS allocate a segment of requested size and also on freeing it unmaps 
-    if (bin > SM_N_SIZE_CLASSES) return false; 
+    if (bin >= SM_N_SIZE_CLASSES) return false; 
     sm_page_queue_t *queue = &heap->page_qs[bin];
 
-    //mi_page_queue_find_free(heap, queue):
-    sm_page_t *page = queue->first;
+    sm_page_t *page = queue->last;
     sm_block_t *free_block = NULL;
     while (page) {
         SMDEBUG("Found page in queue\n")
@@ -428,9 +424,10 @@ void *sm_heap_malloc (sm_heap_t *heap, size_t size) {
 
         //3. page is full: move to full, so alloc from queue remains fast 
         SMDEBUG("Page is full, removing from queue, adding to full bin\n")
-        sm_page_to_full(page, queue); 
+        SMASSERT(page == queue->last) //just in case
+        sm_page_to_full(queue); 
 
-        page = page->next;
+        page = queue->last;
     }
     
     if (!free_block) {

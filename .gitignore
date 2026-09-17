@@ -1,4 +1,5 @@
 # Rocq ignores
+_opam/
 *.vo
 *.vos
 *.vok

@@ -1,4 +1,3 @@
-From iris.proofmode Require Import proofmode. 
 From iris.heap_lang Require Import lang proofmode notation.
 
 Definition freelist_pop : val := λ: "fl",
@@ -11,221 +10,279 @@ Definition freelist_push : val := λ: "fl" "l",
   "l" <- !"fl" ;; 
   "fl" <- SOME "l".
 
+(*TODO(Ben): first hide res, gets block size, store it*)
 Definition new_alloc_lazy : val := λ: "n", 
   let: "lbase" := AllocN ("n" + #3) NONE in 
   "lbase" <- NONE ;;
-  ("lbase" +ₗ #1) <- "n" ;;
-  ("lbase" +ₗ #2) <- #0 ;;
+  "lbase" +ₗ #1 <- "n" ;;
+  "lbase" +ₗ #2 <- #0 ;;
   "lbase".
 
 Definition free : val := λ: "al" "l", freelist_push "al" "l".
 
+(*TODO(Ben): takes block size and does c * bz*)
 Definition freelist_extend : val := rec: "rec" "fl" "lb" "n" "c" :=
   if: "c" + #1 ≤ "n"
   then freelist_push "fl" ("lb" +ₗ "c") ;;
        "rec" "fl" "lb" "n" ("c" + #1)
   else #().
   
+(*TODO(Ben): takes block size and does (cap + ext - 1) * bz and base is + bz * cap*)
 Definition extend : val := λ: "al", 
   let: "fl" := "al" in
   let: "res" := !("al" +ₗ #1) in 
   let: "cap" := !("al" +ₗ #2) in 
-  let: "ext" := if: "cap" ≤ "res" - "cap" then "cap" else "res" - "cap" in 
-  freelist_extend "fl" ("al" +ₗ (#3 + "cap")) "ext" #0 ;;
-  ("al" +ₗ #2) <- ("cap" + "ext").
+  let: "mext" := if: "cap" = #0 then #1 else "cap" in
+  let: "ext" := if: "mext" ≤ "res" - "cap" then "mext" else "res" - "cap" in 
+  if: "ext" = #0 then NONE 
+  else 
+    freelist_extend "fl" ("al" +ₗ (#3 + "cap")) ("ext" - #1) #0 ;;
+    ("al" +ₗ #2) <- ("cap" + "ext") ;;
+    SOME ("al" +ₗ (#3 + "cap" + "ext" - #1)).
 
 Definition alloc : val := λ: "al", 
-  match: (freelist_pop "al") with 
-    NONE => extend "al" ;; freelist_pop "al" 
+  match: freelist_pop "al" with 
+    NONE => extend "al" 
   | SOME "l" => SOME "l"
   end.
   
 Section Hoare.
-Context `{!heapGS_gen hlc Σ}.
+  Context `{!heapGS_gen hlc Σ}.
 
-Implicit Types l lbase al fl : loc.
-Implicit Types n i res cap size : nat.
-Implicit Types v w : val.
+  Implicit Types l lbase al fl : loc.
+  Implicit Types n i res cap size : nat.
+  Implicit Types v w : val.
 
-(*Definition is_valid_loc l lbase n : iProp Σ := 
-   ∃ (i : nat), ⌜l = lbase +ₗ i⌝ ∗ ⌜i < n⌝. *)
+  Definition is_valid_loc l al res : iProp Σ := 
+    ∃ (i : nat), ⌜l = (al +ₗ (3 + i))⌝ ∗ ⌜i < res⌝.
+  (*TODO: add exists res box*)
+  (*
+     ⌜(al +ₗ 3) ≤ₗ l⌝ ∗ ⌜l <ₗ (al +ₗ (3 + res))⌝. *)
 
-Definition is_valid_loc l lbase n : Prop := 
-  ∃ i, l = lbase +ₗ i /\ i < n.
+  Global Instance is_valid_loc_presist l al res : Persistent (is_valid_loc l al res).
+  Proof. apply _. Qed.
 
-Fixpoint is_freelist_rec l lbase cap size : iProp Σ := 
-  match size with 
-  | O => l ↦ NONEV ∗ ⌜is_valid_loc l lbase cap⌝ (*is_valid_loc l lbase cap*)
-  | S s => ∃ l1, l ↦ SOMEV #l1 ∗ ⌜is_valid_loc l lbase cap⌝(*is_valid_loc l lbase cap*) ∗ is_freelist_rec l1 lbase cap s
-  end.
-  
-Definition is_freelist l lbase cap size : iProp Σ := 
-  match size with 
-  | 0 => l ↦ NONEV
-  | S s => ∃ l1, l ↦ SOMEV #l1 ∗ is_freelist_rec l1 lbase cap s
-  end.
+  Fixpoint is_freelist_rec l al res size : iProp Σ := 
+    match size with 
+    | O => l ↦ NONEV ∗ is_valid_loc l al res 
+    | S s => ∃ l1, l ↦ SOMEV #l1 ∗ is_valid_loc l al res ∗ is_freelist_rec l1 al res s
+    end.
+    
+  Definition is_freelist l al res : iProp Σ := 
+    l ↦ NONEV 
+      ∨
+    (*is size here going to work, i guess we only need size for is_freelist rec?
+       and then it really means amound allocated - 1?*)
+    ∃ l1 size, l ↦ SOMEV #l1 ∗ (*⌜size ≤ cap⌝ ∗ does not work in freelists_push
+                                      _hoare otherwise..*) 
+    is_freelist_rec l1 al res size.
 
-Definition is_allocator (l : loc) (res cap size : nat) : iProp Σ := 
-  ⌜res > 0⌝ ∗ 
-  (*⌜cap ≤ res⌝ ∗ ⌜size ≤ cap⌝ ∗ fix proofs later with these maybe? *)
-  (*also may need 'raw' resources.. given by AllocN*)
-  is_freelist l (l +ₗ 3) cap size ∗ (l +ₗ 1) ↦ #res ∗ (l +ₗ 2) ↦ #cap.
+  Definition is_allocator (l : loc) (res : nat) : iProp Σ := 
+    ∃ cap vs, ⌜res > 0⌝ ∗ ⌜cap ≤ res⌝ ∗ (l +ₗ 1) ↦ #res ∗ 
+      (l +ₗ 2) ↦ #cap ∗ is_freelist l l res ∗  (*TODO: add res box*)
+      (l +ₗ (3 + cap)) ↦∗ vs ∗ ⌜length vs = res - cap⌝.
 
-Lemma new_alloc_lazy_hoare l res : 
-  {{{ ⌜res > 0⌝ }}} 
-    new_alloc_lazy #res 
-  {{{ l, RET #l; is_allocator l res 0 0 }}}.
-Proof. 
-  iIntros (φ) "%Hn Hphi". iUnfold new_alloc_lazy. wp_pures.
-  wp_apply wp_allocN_seq; [lia|done|]. iIntros "%la HlaN". 
-  assert (Heq : Z.to_nat (res + 3) = S (S (S (Z.to_nat res)))) by lia.
-  rewrite Heq -cons_seq big_sepL_cons. 
-  iDestruct "HlaN" as "[[Hla HlaT] HlaN]". rewrite Loc.add_0. wp_store. 
-  rewrite -cons_seq big_sepL_cons. iDestruct "HlaN" as "[[Hla1 Hla1T] HlaN]". wp_store. 
-  rewrite -cons_seq big_sepL_cons. iDestruct "HlaN" as "[[Hla2 Hla2T] HlaN]". wp_store. 
-  iApply "Hphi". by iFrame.
-Qed.
+  Lemma new_alloc_hoare l res : 
+    {{{ ⌜res > 0⌝ }}} 
+      new_alloc_lazy #res 
+    {{{ l, RET #l; is_allocator l res }}}.
+  Proof. 
+    iIntros (φ) "%Hn Hphi". iUnfold new_alloc_lazy. wp_pures.
+    wp_apply wp_allocN; [lia|done|]. iIntros "%al (HalN & _)". 
+    assert (Heq : Z.to_nat (res + 3) = S (S (S (Z.to_nat res)))) by lia.
+    rewrite Heq. simpl. rewrite 3!array_cons.
+    iDestruct "HalN" as "(Hal & Hal1 & Hal2 & HalN)". wp_store. wp_store. 
+    rewrite 2!Loc.add_assoc. wp_store. iApply "Hphi". 
+    iUnfold is_allocator. iExists 0. iFrame. 
+    iSplitR; [by iPureIntro|]. iSplitR; [iPureIntro; lia|].
+    iPureIntro. rewrite length_replicate. lia.
+  Qed.
 
-Lemma freelist_pop_hoare fl lbase cap size : 
-  {{{ is_freelist fl lbase cap size }}} 
-    freelist_pop #fl
-  {{{ vret, RET vret; 
-    ⌜vret = NONEV⌝ ∗ is_freelist fl lbase cap size 
-    (*maybe make stronger say, size = 0        ^ here*)
-      ∨ 
-    ∃ l v, ⌜vret = SOMEV #l⌝ ∗ l ↦ v ∗ is_freelist fl lbase cap (size - 1) 
-  }}}. 
-Proof.
-  destruct size; simpl. 
-  { iIntros (φ) "Hfl Hphi"; iUnfold freelist_pop; wp_load. wp_pures. iApply "Hphi".
-    iFrame. by iLeft. }
-  iIntros (φ) "(%l & Hfl & Hflr) Hphi". iUnfold freelist_pop. wp_load. wp_pures.
-  destruct size; simpl.
-  { iDestruct "Hflr" as "(Hl & Hvl)". wp_load. wp_store. wp_pures. iApply "Hphi".
-    iFrame. iRight. by iFrame. }
-  iDestruct "Hflr" as "(%l1 & Hl & Hlv & Hflr)". wp_load. wp_store. wp_pures. 
-  iApply "Hphi". iFrame. iRight. by iFrame. 
-Qed.
+   Lemma freelist_pop_hoare fl al res : 
+    {{{ is_freelist fl al res }}} 
+      freelist_pop #fl
+    {{{ vret, RET vret; 
+      ⌜vret = NONEV⌝ ∗ is_freelist fl al res 
+        ∨ 
+      ∃ l v, ⌜vret = SOMEV #l⌝ ∗ l ↦ v ∗ is_valid_loc l al res ∗ is_freelist fl al res 
+    }}}. 
+  Proof.
+    iIntros (φ) "[Hl | (%l1 & %s & Hl & Hflr)] Hphi"; 
+    iUnfold freelist_pop; wp_load; wp_pures.
+    { iApply "Hphi". iLeft. by iFrame. }
+    destruct s; simpl.
+    { iDestruct "Hflr" as "(Hl1 & Hvl)". wp_load. wp_store. wp_pures. 
+      iApply "Hphi". iRight. by iFrame. }
+    iDestruct "Hflr" as "(%l0 & Hl1 & Hl1v & Hflr)". wp_load. wp_store.
+    wp_pures. iApply "Hphi". iRight. iUnfold is_freelist. iFrame.
+    iSplitR; [by iPureIntro|]. iRight. iFrame. iPureIntro. lia.
+  Qed.
 
-Lemma freelist_push_hoare fl lbase l cap size : 
-  {{{ is_freelist fl lbase cap size ∗ (∃ v, l ↦ v) ∗ ⌜is_valid_loc l lbase cap⌝ }}}
-    freelist_push #fl #l
-  {{{ RET #(); is_freelist fl lbase cap (S size) }}}.
-Proof. 
-  destruct size; simpl.
-  { iIntros (φ) "(Hfl & (%v & Hl) & Hlv) Hphi". iUnfold freelist_push. wp_pures. 
-    wp_load. wp_store. wp_store. iApply "Hphi". by iFrame. }
-  iUnfold freelist_push. destruct size; simpl.
-  { iIntros (φ) "((%l1 & Hfl & Hflv & Hflr) & (%v & Hl) & Hlv) Hphi". wp_load.
-    wp_store. wp_store. iApply "Hphi". by iFrame. }
-  iIntros (φ) "((%l1 & Hfl & Hflv) & (%v & Hl) & Hlv) Hphi". wp_load.
-  wp_store. wp_store. iApply "Hphi". by iFrame.
-Qed.
+  Lemma freelist_push_hoare l fl al res : 
+    {{{ is_freelist fl al res ∗ (∃ v, l ↦ v) ∗ is_valid_loc l al res }}}
+      freelist_push #fl #l
+    {{{ RET #(); is_freelist fl al res }}}.
+  Proof. 
+    iIntros (φ) "([Hfl|(%l1&%s&Hfl&Hisfl)]&(%v&Hl)&Hlv) Hphi"; 
+    iUnfold freelist_push; wp_load; wp_store; wp_store.
+    { iApply "Hphi". iRight. iFrame. iExists 0. (*iSplitR; [iPureIntro; lia|]. *)
+      iUnfold is_freelist_rec. by iFrame. }
+    iApply "Hphi". iRight. iExists l, (S s). by iFrame. 
+  Qed.
 
-Lemma free_hoare al l res cap size : 
-  {{{ is_allocator al res cap size ∗ (∃ v, l ↦ v) ∗ ⌜is_valid_loc l (al +ₗ 3) cap⌝ }}}
-    free #al #l
-  {{{ RET #(); is_allocator al res cap (S size) }}}.
-Proof.
-  iIntros (φ) "((%Hres & Hfl & Hal1) & Hl & Hvl) Hphi".
-  iUnfold free. wp_pures. 
-  iApply ((freelist_push_hoare al (al +ₗ 3)) with "[Hfl Hl Hvl]"); iFrame.
-  iNext. iIntros "Hfl". iApply "Hphi". by iFrame.
-Qed.
+  Lemma free_hoare l al res : 
+    {{{ is_allocator al res ∗ (∃ v, l ↦ v) ∗ is_valid_loc l al res }}}
+      free #al #l
+    {{{ RET #(); is_allocator al res }}}.
+  Proof.
+    iIntros (φ) "((%cap&%vs&%Hr&%Hcr&Hal1&Hal2&Hfl&Hun) & (%v & Hl) & #Hlv) Hphi".
+    iUnfold free. wp_pures. iApply (freelist_push_hoare with "[Hfl Hl]"); 
+    [by iFrame|]. iNext. iIntros "Hfl". iApply "Hphi". iFrame. auto.
+  Qed.
 
-Lemma is_valid_loc_range l lbase cap n c :
-  c ≤ n -> 
-  is_valid_loc l lbase cap -> 
-  is_valid_loc (l +ₗ n) lbase cap -> 
-  is_valid_loc (l +ₗ c) lbase cap.
-Proof.
-  intros Hc (i & -> & Hic) (j & Heq & Hjc). unfold is_valid_loc. exists (i + c).
-  rewrite Loc.add_assoc in Heq. rewrite Loc.add_assoc. apply Loc.add_inj in Heq. 
-  split; [by rewrite Nat2Z.inj_add|lia].
-Qed.
+  Lemma freelist_extend_hoare fl al res lb cap n c d : 
+    d = n - c -> 
+    lb = (al +ₗ (3 + cap)) ->
+    cap ≤ res ->
+    n ≤ res - cap ->
+    {{{ is_freelist fl al res ∗ ∃ vs, (lb +ₗ c) ↦∗ vs ∗ ⌜length vs = d⌝ }}} 
+      freelist_extend #fl #lb #n #c
+    {{{ RET #(); is_freelist fl al res }}}. 
+  Proof. 
+    iInduction d as [|d IH] forall (c); simpl; 
+    iIntros (Hd -> Hcr Hd2 φ) "(Hisfl & %vs & Hun & %Hlen) Hphi"; 
+    iUnfold freelist_extend; wp_pures. 
+    { case_bool_decide; [lia|]. wp_pures. by iApply "Hphi". }
+    case_bool_decide; [|lia]. wp_pures. destruct vs;
+    [rewrite length_nil in Hlen; lia|]. rewrite array_cons.
+    iDestruct "Hun" as "(Hun1 & Hun)". 
+    wp_apply (freelist_push_hoare with "[Hisfl Hun1]").
+    { iFrame. iExists (cap + c). rewrite Loc.add_assoc. iPureIntro.
+      split; [|lia]. by rewrite Nat2Z.inj_add Z.add_assoc. }
+    iIntros "Hisfl". wp_pure. wp_pure. wp_pure. fold freelist_extend.  
+    assert (Heq : (Z.of_nat c + 1)%Z = Z.of_nat (c + 1)) by lia. rewrite Heq. 
+    iApply ("IH" with "[] [] [] [] [Hisfl Hun]"); 
+    try iPureIntro; [lia|done|lia|lia| |]. 
+    { iSplitR "Hun"; [done|]. iExists vs. iSplitL; 
+      [by rewrite Loc.add_assoc Nat2Z.inj_add|]. iPureIntro. simpl in Hlen. lia. }
+    iNext. iIntros "Hfl". by iApply "Hphi".  
+  Qed. 
 
-Lemma is_valid_loc_cap l lbase cap n : 
-  is_valid_loc l lbase cap -> is_valid_loc l lbase (cap + n).
-Proof. 
-  intros (i & -> & Hic). unfold is_valid_loc. exists i. split; [done|lia].
-Qed.
+  Lemma extend_hoare al res : 
+    {{{ is_allocator al res }}} 
+      extend #al 
+      {{{ vret, RET vret; is_allocator al res ∗ 
+        ((∃ l v, ⌜vret = SOMEV #l⌝ ∗ l ↦ v ∗ is_valid_loc l al res) 
+          ∨  
+        ⌜vret = NONEV⌝)
+      }}}.
+  Proof. 
+    iIntros (φ) "(%cap & %vs & %Hr & %Hcr & Hal1 & Hal2 & Hisfl & Hun & %Hlen) Hphi".
+    iUnfold extend. wp_pures. wp_load. wp_load. wp_pures. 
+    destruct (decide (cap = 0)) as [Hc | Hc]. 
+    (*cap = 0 branch, mext = 1*)
+    { rewrite Hc. wp_pures. case_bool_decide; [|lia]. wp_pures. 
+      wp_apply ((freelist_extend_hoare al al res (al +ₗ 3) 0 0 0 0) with "[Hisfl]"); 
+      try lia; [assert ((3 + Z.of_nat 0)%Z = 3) by lia; by rewrite H0| |].
+      { iSplitL "Hisfl"; [done|]. iExists []. iSplit; [by rewrite array_nil|iPureIntro;
+          by rewrite length_nil]. }
+      destruct vs; [rewrite length_nil in Hlen; lia|]. rewrite array_cons.
+      iDestruct "Hun" as "(Hun1 & Hun)".
+      iIntros "Hisfl". wp_store. wp_pures. iApply "Hphi". iSplitR "Hun1". 
+      { iUnfold is_allocator. iExists 1, vs. iFrame. iSplitR; [by iPureIntro|].
+        iSplitR; [by iPureIntro|]. iSplitL; [by rewrite Loc.add_assoc|]. 
+        iPureIntro. simpl in Hlen. lia. }
+      iLeft. iExists (al +ₗ 3), v. iFrame. iSplitL; [done|]. iExists 0. auto. }
+    case_bool_decide; [inv H; lia|]. wp_pures. case_bool_decide.
+    { wp_pures. case_bool_decide; [inv H1; lia|]. wp_pures. 
+      assert (Z.of_nat (cap - 1) = (Z.of_nat cap - 1)%Z) by lia. rewrite -H2.
+      rewrite -(take_drop (cap - 1) vs). 
+      iDestruct (array_app with "Hun") as "(Hun1 & Hun2)".
+      assert (Hlt : length (take (cap - 1) vs) = cap - 1); [rewrite length_take; lia|].
+      wp_apply (freelist_extend_hoare al al res (al +ₗ (3 + cap)) 
+      cap (cap - 1) 0 (cap - 1) with "[Hisfl Hun1]"); try lia; [done| |].
+      { iSplitL "Hisfl"; [done|]. rewrite Loc.add_0. iFrame. 
+        iPureIntro. by rewrite Hlt. }
+      iIntros "Hisfl". wp_store. wp_pures. iApply "Hphi". rewrite Hlt. 
+      rewrite -(take_drop 1 (drop (cap - 1) vs)). 
+      iDestruct (array_app with "Hun2") as "(Hun1 & Hun2)". iSplitR "Hun1". 
+      { iUnfold is_allocator. iExists (cap + cap), (drop cap vs). 
+        rewrite Nat2Z.inj_add. iFrame. iSplitR; [iPureIntro; lia|]. 
+        iSplitR; [iPureIntro; lia|]. rewrite length_take length_drop Hlen.
+        iSplitL; [|iPureIntro; rewrite length_drop; lia]. 
+        assert (1 `min` (res - cap - (cap - 1)) = 1); [rewrite min_l; [done|lia]|]. 
+        rewrite H3 drop_drop 2!Loc.add_assoc -Nat2Z.inj_add. 
+        assert (cap - 1 + 1 = cap) by lia. by rewrite H4 Z.add_assoc. }
+      iLeft. rewrite Loc.add_assoc. rewrite Nat2Z.inj_sub; [|lia].
+      Search "+" "-". assert ((3 + cap + (cap - 1))%Z = (3 + cap + cap - 1)%Z) by lia. 
+      rewrite H3. iExists (al +ₗ (3 + cap + cap - 1)).
+      assert (length (drop (cap - 1) vs) > 0); [rewrite length_drop Hlen; lia|].
+      destruct (drop (cap - 1) vs); [rewrite length_nil in H4; lia|]. simpl.
+      rewrite take_0. iDestruct (array_singleton with "Hun1") as "Hun1".
+      iExists v. iFrame. iSplitR; [by iPureIntro|]. iExists (cap + cap - 1).
+      iSplitL; [|iPureIntro; lia]. 
+      rewrite -Z.add_assoc. 
+      assert ((3 + (cap + cap) - 1)%Z = (3 + (cap + cap - 1))%Z) by lia. 
+      rewrite H5 Nat2Z.inj_sub; [|lia]. by rewrite Nat2Z.inj_add. }
+    wp_pures. destruct (decide (res - cap = 0)) as [Hcr2 | Hcr2]. 
+    { rewrite -Nat2Z.inj_sub; [|done]. rewrite Hcr2. wp_pures. 
+      iApply "Hphi". iSplitL; [iFrame; iPureIntro; auto|]. iRight. by iPureIntro. }
+    case_bool_decide; [inv H1; lia|]. wp_pures.
+    iPoseProof (freelist_extend_hoare al al res (al +ₗ (3 + cap)) cap 
+    (res - cap - 1) 0 (res - cap - 1)) as "H"; [lia|done|done|lia|]. 
+    assert (Z.of_nat (res - cap - 1) = (Z.of_nat res - Z.of_nat cap - 1)%Z) by lia.
+    rewrite H2.  
+    rewrite -(take_drop (res - cap - 1) vs). 
+    iDestruct (array_app with "Hun") as "(Hun1 & Hun2)".
+    wp_apply ("H" with "[Hisfl Hun1]"). 
+    { iFrame "Hisfl". iExists (take (res - cap - 1) vs). iSplitL "Hun1"; [
+      by rewrite Loc.add_assoc Z.add_0_r|]. iPureIntro. rewrite length_take. lia. }
+    iIntros "Hisfl". wp_store. wp_pures. iApply "Hphi".
+    rewrite -(take_drop 1 (drop (res - cap - 1) vs)). 
+    iDestruct (array_app with "Hun2") as "(Hun1 & Hun2)". iSplitR "Hun1". 
+    { iExists (cap + (res - cap)),  (drop (res - cap) vs). 
+      rewrite -Nat2Z.inj_sub; [|done]. rewrite Nat2Z.inj_add. iFrame.
+      iSplitR; [done|]. iSplitR; [iPureIntro; lia|]. rewrite length_take.
+      iSplitL; [|iPureIntro; rewrite length_drop Hlen; lia].
+      rewrite Hlen. assert ((res - cap - 1) `min` (res - cap) = res - cap - 1); 
+      [rewrite min_l; [done|lia]|]. rewrite H3. rewrite length_take.
+      assert (1 `min` length (drop (res - cap - 1) vs) = 1); 
+      [rewrite length_drop Hlen min_l; [done|]; lia|]. rewrite H4. 
+      rewrite drop_drop Nat.sub_add; [|lia]. rewrite !Loc.add_assoc. 
+      assert ((Z.of_nat (res - cap - 1) + Z.of_nat 1)%Z = Z.of_nat (res - cap)) by lia.
+      by rewrite H5 Z.add_assoc. }
+    iLeft. rewrite length_take Hlen. 
+    assert ((res - cap - 1) `min` (res - cap) = res - cap - 1); 
+    [rewrite min_l; [done|lia]|]. rewrite H3. 
+    assert (length (drop (res - cap - 1) vs) > 0); [rewrite length_drop Hlen; lia|].
+    destruct (drop (res - cap - 1) vs); [rewrite length_nil in H4; lia|]. simpl. 
+    rewrite take_0 array_singleton 2!Loc.add_assoc -Nat2Z.inj_sub; [|done].
+    assert ((3 + cap + Z.of_nat (res - cap - 1))%Z = 
+    (3 + cap + Z.of_nat (res - cap) - 1)%Z) by lia. 
+    rewrite H5. iExists (al +ₗ (3 + cap + (res - cap)%nat - 1)), v. iSplitR; 
+    [by iPureIntro|]. iFrame. iExists (cap + (res - cap)%nat - 1). 
+    iSplitR; [iPureIntro|iPureIntro; lia]. 
+    rewrite -Z.add_assoc -Nat2Z.inj_add -Z.add_sub_assoc Nat2Z.inj_sub; [done|lia].
+  Qed.
 
-Lemma is_freelist_rec_larger_cap fl lbase cap size n : 
-  is_freelist_rec fl lbase cap size -∗ is_freelist_rec fl lbase (cap + n) size.
-Proof.
-  iInduction size as [|size IH]forall (fl); simpl; iUnfold is_freelist_rec. 
-  { iIntros "($ & %H)". iPureIntro. by apply is_valid_loc_cap. }
-  fold is_freelist_rec. iIntros "(%l1 & Hfl & %Hflv & Hisfl)". iFrame.
-  iSplitR; [iPureIntro; by apply is_valid_loc_cap|]. by iApply "IH". 
-Qed.
-
-Lemma is_freelist_larger_cap fl lbase cap size n : 
-  is_freelist fl lbase cap size -∗ is_freelist fl lbase (cap + n) size.
-Proof.
-  destruct size; iUnfold is_freelist; [by iIntros|]. 
-  iIntros "(%l1 & Hfl & Hisflr)". iFrame. by iApply is_freelist_rec_larger_cap.
-Qed.
-
-Lemma freelist_extend_hoare fl lbase lb cap size n c d : 
-  d = n - c -> 
-  {{{ is_freelist fl lbase cap size ∗ 
-    ⌜is_valid_loc lb lbase cap⌝ ∗ ⌜is_valid_loc (lb +ₗ (n - 1)) lbase cap⌝ ∗
-      [∗ list] i ∈ seq c d, ∃ v, (lb +ₗ i) ↦ v 
-  }}} 
-    freelist_extend #fl #lb #n #c
-  {{{ RET #(); is_freelist fl lbase (cap + d) (size + d) }}}. 
-Proof. 
-  iInduction d as [|d IH] forall (cap size c); simpl; 
-  iIntros (Hd φ) "(Hisfl & %Hlbv & %Hlbnv & HlbCD) Hphi"; iUnfold freelist_extend. 
-  { wp_pures. case_bool_decide; [lia|]. wp_pures. iApply "Hphi". 
-    by rewrite !Nat.add_0_r. }
-  wp_pures. case_bool_decide; [|lia]. wp_pures. 
-  iDestruct "HlbCD" as "(Hlbc & HlbCD)".
-  wp_apply (freelist_push_hoare with "[Hisfl Hlbc]").
-  { iFrame. iPureIntro. apply (is_valid_loc_range _ _ _ (n - 1)); [lia|done|].
-    assert ((Z.of_nat n - 1)%Z = Z.of_nat (n - 1)) by lia. by rewrite -H0. }
-  iIntros "Hisfl". wp_pure. wp_pure. wp_pure. fold freelist_extend.  
-  assert (Heq :(Z.of_nat c + 1)%Z = Z.of_nat (c + 1)) by lia. rewrite Heq. 
-  iApply ("IH" with "[] [HlbCD Hisfl]"); [iPureIntro; lia| |]. 
-  { iAssert (is_freelist fl lbase (cap + 1) (S size)) with "[Hisfl]" as "Hifl"; 
-    [by iApply is_freelist_larger_cap|]. rewrite Nat.add_1_r. iFrame.
-    iSplitR. { iPureIntro. rewrite -Nat.add_1_r. by apply is_valid_loc_cap. }
-    iSplitR. { iPureIntro. rewrite -Nat.add_1_r. by apply is_valid_loc_cap. }
-    by rewrite Nat.add_1_r. }
-  iNext. iIntros "Hisfl". iApply "Hphi". by rewrite !Nat.add_succ_comm.
-Qed.
-
-(*TODO(Ben): probalby need things like cap <= res, size <= cap, add to is_allocator 
- then fix proofs..*)
-Lemma extend_hoare_true al res cap size : 
-  cap ≤ res - cap -> 
-  {{{ is_allocator al res cap size }}} 
-    extend #al 
-  {{{ RET #(); is_allocator al res (cap + cap) (size + cap) }}}.
-Proof. 
-  iIntros (Hc φ) "(%Hr & Hisfl & Hal1 & Hal2) Hphi". iUnfold extend.
-  wp_pures. wp_load. wp_load. wp_pures. case_bool_decide; [|lia].
-  wp_pures. iPoseProof (freelist_extend_hoare al (al +ₗ 3) (al +ₗ (3 + cap)) 
-  cap size cap 0 cap) as "H"; [lia|]. assert (Z.of_nat 0 = 0%Z) by lia. rewrite H0. 
-  wp_apply ("H" with "[Hisfl]"). 
-  { (*can't prove rn, because is_allocator forgets that it has a bunch of 
-    locations that point to an aribtrary value, i guess we add that aswell*) 
-    admit. }
-  iIntros "Hisfl". wp_store. iApply "Hphi". iUnfold is_allocator.
-  iFrame. iSplitR; [by iPureIntro|]. by rewrite Nat2Z.inj_add.
-Admitted.
-
-Lemma alloc_hoare al res cap size :
-  {{{ is_allocator al res cap size }}}
-    alloc #al
-  {{{ vret, RET vret; 
-    ⌜vret = NONEV⌝ ∗ is_allocator al res cap size 
-      ∨ 
-    ∃ l v, ⌜vret = SOMEV #l⌝ ∗ l ↦ v ∗ is_allocator al res cap (size - 1)
-  }}}.
-Proof.
-  iIntros (φ) "Hal Hphi". iUnfold alloc. wp_pures. wp_apply freelist_pop_hoare. 
-  { admit. } iIntros "%v H". (*works out i think*) 
-Admitted.
+  Lemma alloc_hoare al res :
+    {{{ is_allocator al res }}}
+      alloc #al
+    {{{ vret, RET vret; is_allocator al res ∗
+      ((∃ l v, ⌜vret = SOMEV #l⌝ ∗ l ↦ v ∗ is_valid_loc l al res)
+        ∨ 
+      ⌜vret = NONEV⌝)
+    }}}.
+  Proof.
+    iIntros (φ) "(%cap & %vs & %Hr & %Hcr & Hal1 & Hal2 & Hisfl & Hun & %Hlen) Hphi". 
+    iUnfold alloc. wp_pures. wp_apply (freelist_pop_hoare with "Hisfl"). 
+    iIntros (v) "[(-> & Hisfl)|(%l & %v' & -> & Hl & #Hlv & Hisfl)]".
+    { wp_pures. wp_apply (extend_hoare with "[Hal1 Hal2 Hun Hisfl]"); 
+      [iExists cap, vs; iFrame; iPureIntro; lia|]. 
+      iIntros (v) "(Hal & [(%l & %v' & -> & Hisfl)| ->])"; 
+      iApply "Hphi"; iSplitL "Hal"; try done; [iLeft; by iFrame|by iRight]. }
+    wp_pures. iApply "Hphi". iSplitR "Hl"; [iExists cap, vs; iFrame; iPureIntro; lia|].
+    iLeft. iFrame. iSplitR; [by iPureIntro|done]. 
+  Qed.
 
 End Hoare.

@@ -1,122 +1,4 @@
-#include "defs.h"
-#include "logger.h"
-#include "assert.h"
-#include <errno.h>    //errno
-#include <sys/mman.h> //munmap, mmap
-#include <string.h>   //strerror
-
-/* Simple Mimalloc v1.0.0
-    based on: https://github.com/microsoft/mimalloc/releases/tag/v1.0.0 
-    High level design 
-    - heap & segments -> pages -> blocks
-    - heap manages pages and size classes/bins
-        heap also holds the list of allocated segments
-        for slow alloc
-    - segments are large blocks of memory with metadata
-    - pages are smaller units 
-        free list sharding, local free list per page 
-    - blocks are smallest unit and given to user
-*/
-
-//TODO(Ben): try adding another size class, (now we have one single block size / size class)
-//TODO(Ben): check if arbitrary removal is only for full queue! (sm_page_queue_remove)
-//  In our implementation only the full queue needs it
-//  make full queue a list / different type
-//  then remove arbitrary removal from queue, or keep it and type def a list type
-//  in the end it is all doubly linked list anyways
-//TODO(Ben): add deffered freeing
-//TODO(Ben): should check that everything is freed correctly in tests: write a validation function
-
-//NOTE: cases not handled, > largest size class
-//  mimalloc has larger pages in segment for this if < 4Mib
-//  otherwise it will OS allocate a segment with one page of needed size
-
-/* NOTE: where to put segment metadata
-    we kind of have options here 
-    1. alocate: SM_SEGMENT_SIZE + sizeof(sm_segment_t)
-        and finding page start and vice versa is more combersome
-        and possibly would have to align after sm_segment_t so allocate 
-        sligtly more
-    2. allocate: SM_SEGMENT_SIZE 
-        use first part of first page for sm_segment_t (with pages meta 
-        data), this requires special handling of first page and setting 
-        reserved specially, but should be doable, mimalloc v1.0.0 does this
-    3. allocate: SM_SEGMENT_SIZE 
-        becuase of virtual memeory we can use first part of first page 
-        for segment data and then skip to next page boundary for actual 
-        first page, this requires basically no special code
-    effects: sm_page_init, sm_page_start, other?
-*/
-
-#define SM_SEGMENT_SIZE (4 * 1024 * 1024)
-#define SM_PAGE_SIZE (64 * 1024) 
-
-#define SM_N_PAGES_PER_SEGMENT 2 
-
-#define SM_N_SIZE_CLASSES 1
-#define SM_BLOCK_SIZE 1024
-
-#define MAX_ALIGN 64 
-
-struct sm_heap_t; 
-
-/* Block
-    just a node for (intrusive) freelists
-*/
-typedef struct sm_block_s {
-    struct sm_block_s *next; 
-} sm_block_t;
-
-/* Page meda data
-*/
-typedef struct sm_page_t {
-    u8 segment_idx;         //index in meta data pages array in segment
-    bool in_full;           //page is in full bin
-    u16 capacity;           //number for blocks commited (to freelist)
-    u16 reserved;           //total number of blocks in this page
-    sm_block_t* free;       //free-list blocks, allocation (thread-local)
-    sm_block_t* local_free; //free-list blocks, freeing (thread-local)
-    size_t block_size;      //size of blocks
-    struct sm_heap_t *heap; //pointer to heap (for full -> free enqueueing)
-    struct sm_page_t *next;
-    struct sm_page_t *prev;
-} sm_page_t;
-
-/* Segment
-*/
-typedef struct sm_segment_t {
-    struct sm_segment_t *next;
-    struct sm_segment_t *prev;
-    size_t used;              //count of pages in use 
-    size_t info_size; //space used for segment meta data + alignment
-    //NOTE: In real implementaiton this is the 'struct' ends in array
-    //  trick (instead of putting it after), so indexing with segment_idx 
-    //  is possible, you have 3 sizes of pages, so you don't statically know the size
-    //  we have one page size, but you kind of want a variable size for larger allocation 
-    sm_page_t pages[SM_N_PAGES_PER_SEGMENT]; 
-} sm_segment_t;
-
-/* Heap 
-*/
-typedef struct {
-    sm_page_t *first;
-    sm_page_t *last;
-    size_t block_size;
-} sm_page_queue_t;
-
-typedef sm_page_queue_t sm_full_list_t;
-
-//In mimalloc, it uses SM_N_SIZE_CLASSES + 1 page queues, where the last on 
-//is the full list, the full list needs to support arbitrary removal
-//whereas the page queues are really FIFO queues.
-typedef struct sm_heap_t {
-    sm_segment_t *first;
-    sm_page_queue_t page_qs[SM_N_SIZE_CLASSES]; 
-    sm_full_list_t full_list;
-} sm_heap_t;
-
-sm_heap_t global_heap = {0};
-
+#include "simplemimalloc.h"
 
 /* Utilities: 
     alignment calculations, etc
@@ -145,7 +27,7 @@ size_t sm_os_page_size(void) {
 }
 
 /* Utilities data structures: 
-    intrusive stack, queue, list, etc
+    queue, list, binning
 */
 
 //for freelists in pages &page->free and &page->local_free
@@ -168,27 +50,20 @@ void sm_segment_push_front (sm_segment_t **head, sm_segment_t *new) {
     *head = new;
 }
 
-void sm_segment_remove (sm_segment_t **head, sm_segment_t *seg) {
-    if (seg->prev) seg->prev->next = seg->next;
-    if (seg->next) seg->next->prev = seg->prev;
-    if (seg == *head) *head = seg->next;
-    seg->next = NULL;
-    seg->prev = NULL;
-}
-
 //for page queues and full list in heap
 u8 sm_bin (size_t size) {
-    if (size > SM_BLOCK_SIZE) {
-        return SM_N_SIZE_CLASSES;
+    if (size > BLOCK_SIZES[SM_N_SIZE_CLASSES - 1]) return SM_N_SIZE_CLASSES;
+    u8 bin = 0; 
+    for (int i = 0; i < SM_N_SIZE_CLASSES; i++) {
+        if (size < BLOCK_SIZES[i]) break;
+        bin++;
     }
-    return 0;
+    return bin;
 }
 
 ssize_t sm_bin_to_size (u8 bin) {
-    if (bin == 0) {
-        return SM_BLOCK_SIZE;
-    }
-    return -1;
+    if (bin >= SM_N_SIZE_CLASSES) return -1;
+    return BLOCK_SIZES[bin];
 }
 
 void sm_page_queue_enqueue (sm_page_queue_t *queue, sm_page_t *page_md) { 
@@ -219,7 +94,6 @@ sm_page_t *sm_page_queue_dequeue (sm_page_queue_t *queue) {
     sm_full_list_remove(queue, last);
     return last;
 }
-
 
 
 /*
@@ -507,79 +381,4 @@ void sm_free (void *ptr) {
         sm_page_to_class(page_md);  
     }
     sm_block_push_front(&page_md->local_free, (sm_block_t*)ptr);
-    //deffered freeing?
-}
-
-/*
-    Main
-*/
-
-i32 main () {
-    /* Test 1: allocate and free 
-        all the way slow path: os allocate first segment
-    */
-    SMDEBUG("----------TEST 1-----------\n")
-    void *data = sm_malloc(500);  
-    sm_free(data);
-    SMDEBUG("--------------------------\n")
-
-    /* Test 2: allocate and free multiple times 
-        should always return the same block
-        since it should collect free blocks first: (page->free = page->local_free)
-        only after that it page extends: which should not be hit.
-    */
-    SMDEBUG("----------TEST 2-----------\n")
-    int enough = SM_SEGMENT_SIZE / SM_PAGE_SIZE + 1;
-    void *prev = data;
-    for (int i = 0; i < enough; i++) {
-        data = sm_malloc(500);
-        SMASSERT(prev == data)
-        prev = data;
-        sm_free(data);
-    }
-    SMDEBUG("--------------------------\n")
-
-    /* Test 3: allocate enough to page extend multiple times  
-        it should extend 4 times: 1 -> 2, 2 -> 4, 4 -> 8, 8 -> 16 
-    */ 
-    SMDEBUG("----------TEST 3-----------\n")
-    void *datas[10];
-    for (int i = 0; i < 10; i++) {
-        datas[i] = sm_malloc(500);
-    }
-    for (int i = 0; i < 10; i++) {
-        sm_free(datas[i]);
-    }
-    SMASSERT(global_heap.first->pages[0].capacity == 16)
-    SMDEBUG("--------------------------\n")
-
-    /* Test 4: allocate enough to ask for new page 
-        first page has 63 blocks (due to segment/page metadata)  
-        so we will allocate 64 times  
-        - since everything is freed before we should be able to allocate 10 times 
-            from fee list first, then 6 more times from last page extend
-        - then we page extend from 16 -> 32 and 32 -> 63
-        - on 64th allocation it will put the page into the full bin
-            and if SM_N_PAGES_PER_SEGMENT == 1 
-            then allocate a new os segment 
-            otherwise allocate a new page from segment. 
-        - on the second to last free it should also return the full page to the size class queue/stack 
-    */
-    SMDEBUG("----------TEST 4-----------\n")
-    void *datas2[64];
-    for (int i = 0; i < 64; i++) {
-        datas[i] = sm_malloc(500);
-    }
-    for (int i = 0; i < 64; i++) {
-        sm_free(datas[i]);
-    }
-    //if there is one page per segment, a new segment was allocated and put as global-heap.first
-    if (SM_N_PAGES_PER_SEGMENT == 1) {
-        SMASSERT(global_heap.first->next->pages[0].capacity == global_heap.first->next->pages[0].reserved)
-    } else {
-        SMASSERT(global_heap.first->pages[0].capacity == global_heap.first->pages[0].reserved)
-    }
-    SMDEBUG("--------------------------\n")
-
-    return 0;
 }

@@ -7,10 +7,10 @@ BIN := sm.out
 
 debug:
 	$(CC) -o logger.o $(C_FLAGS) $(DEBUG_FLAGS) -c logger.c
-	$(CC) -o $(BIN) $(C_FLAGS) $(DEBUG_FLAGS) simplemimalloc.c logger.o
+	$(CC) -o $(BIN) $(C_FLAGS) $(DEBUG_FLAGS) smtest.c logger.o 
 	rm -f logger.o
 
 release:
 	$(CC) -o logger.o $(C_FLAGS) $(RELEASE_FLAGS) -c logger.c
-	$(CC) -o $(BIN) $(C_FLAGS) $(RELEASE_FLAGS) simplemimalloc.c logger.o
+	$(CC) -o $(BIN) $(C_FLAGS) $(RELEASE_FLAGS) smtest.c logger.o
 	rm -f logger.o

@@ -1,9 +1,11 @@
 # Rocq ignores
 _opam/
+iris/
 *.vo
 *.vos
 *.vok
 *.glob
+*.lia.cache
 
 # C ignore
 *.o
@@ -12,4 +14,5 @@ _opam/
 # Misc ignores
 NOTES.md
 TODO.md
+INSTALLATION.md
 project.md

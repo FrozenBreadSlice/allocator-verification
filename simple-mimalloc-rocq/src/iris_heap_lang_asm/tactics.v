@@ -1,5 +1,5 @@
 From stdpp Require Import fin_maps.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Export lang.
 Import heap_lang.
 
 (** The tactic [reshape_expr e tac] decomposes the expression [e] into an

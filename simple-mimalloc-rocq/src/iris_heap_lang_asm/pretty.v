@@ -1,5 +1,5 @@
 From stdpp Require Export pretty.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import lang.
+From AllSrc.iris_heap_lang_asm Require Import lang.
 
 (** * Pretty printing for HeapLang values *)
 

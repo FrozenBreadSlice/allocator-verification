@@ -11,8 +11,8 @@ For utility functions on arrays (e.g., freeing/copying an array), see
 From stdpp Require Import fin_maps.
 From iris.bi Require Import lib.fractional.
 From iris.proofmode Require Import proofmode.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export primitive_laws.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import tactics notation.
+From AllSrc.iris_heap_lang_asm Require Export primitive_laws.
+From AllSrc.iris_heap_lang_asm Require Import tactics notation.
 
 (** The [array] connective is a version of [pointsto] that works
 with lists of values. *)

@@ -1,6 +1,6 @@
 From iris.program_logic Require Export weakestpre.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
 
 Definition assert : val :=
   λ: "v", if: "v" #() then #() else #0 #0. (* #0 #0 is unsafe *)

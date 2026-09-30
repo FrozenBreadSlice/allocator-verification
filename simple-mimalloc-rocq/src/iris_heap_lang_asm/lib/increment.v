@@ -1,8 +1,8 @@
 From iris.bi.lib Require Import fractional.
 From iris.base_logic.lib Require Export invariants.
 From iris.program_logic Require Export atomic.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation atomic_heap par.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation atomic_heap par.
 
 (** Show that implementing fetch-and-add on top of CAS preserves logical
 atomicity. *)

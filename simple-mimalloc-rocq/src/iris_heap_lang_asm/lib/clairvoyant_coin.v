@@ -1,8 +1,8 @@
 From iris.base_logic Require Export invariants.
 From iris.program_logic Require Export weakestpre.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
-From IntrusiveAllocators.iris_heap_lang_asm.lib Require Export nondet_bool.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm.lib Require Export nondet_bool.
 
 (** The clairvoyant coin predicts all the values that it will
 *non-deterministically* choose throughout the execution of the

@@ -1,5 +1,5 @@
 From stdpp Require Import gmap stringmap.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Export lang.
 
 (* This file contains some metatheory about the heap_lang language,
   which is not needed for verifying programs. *)

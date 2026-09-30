@@ -6,9 +6,9 @@ From iris.base_logic.lib Require Import mono_nat.
 From iris.base_logic.lib Require Export gen_heap proph_map gen_inv_heap.
 From iris.program_logic Require Export weakestpre total_weakestpre.
 From iris.program_logic Require Import ectx_lifting total_ectx_lifting.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang. (*TODO(Ben): not needed right (was not here)*)
-From IntrusiveAllocators.iris_heap_lang_asm Require Import class_instances. (*was Export*)
-From IntrusiveAllocators.iris_heap_lang_asm Require Import tactics notation.
+From AllSrc.iris_heap_lang_asm Require Export lang. (*TODO(Ben): not needed right (was not here)*)
+From AllSrc.iris_heap_lang_asm Require Import class_instances. (*was Export*)
+From AllSrc.iris_heap_lang_asm Require Import tactics notation.
 
 Class heapGS_gen hlc Σ := HeapGS {
   heapGS_invGS : invGS_gen hlc Σ;

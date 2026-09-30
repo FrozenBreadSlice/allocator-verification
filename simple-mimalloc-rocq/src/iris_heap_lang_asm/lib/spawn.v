@@ -1,8 +1,8 @@
 From iris.algebra Require Import excl.
 From iris.base_logic.lib Require Import invariants.
 From iris.program_logic Require Export weakestpre.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
 
 Definition spawn : val :=
   λ: "f",

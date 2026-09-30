@@ -1,6 +1,6 @@
 From iris.program_logic Require Export weakestpre.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export derived_laws.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm Require Export derived_laws.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
 
 (** Provides some array utilities:
 

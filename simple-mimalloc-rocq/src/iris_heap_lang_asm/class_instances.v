@@ -1,5 +1,5 @@
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import tactics notation.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import tactics notation.
 
 Global Instance into_val_val v : IntoVal (Val v) v.
 Proof. done. Qed.

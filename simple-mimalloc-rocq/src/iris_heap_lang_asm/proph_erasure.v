@@ -1,7 +1,7 @@
 From stdpp Require Import gmap.
 From iris.program_logic Require Export adequacy.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import notation tactics.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import notation tactics.
 
 (** This file contains the proof that prophecies can be safely erased
 from programs. We erase a program by replacing prophecy identifiers

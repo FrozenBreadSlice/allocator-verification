@@ -1,6 +1,6 @@
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
-From IntrusiveAllocators.iris_heap_lang_asm.lib Require Import assert.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm.lib Require Import assert.
 
 (** The function [unwrap o] (unsafely) asserts that [o] is [SOMEV v],
 and returns the contained value [v]. *)

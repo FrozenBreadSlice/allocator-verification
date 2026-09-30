@@ -1,9 +1,9 @@
 From iris.algebra Require Import gmultiset.
 From iris.base_logic Require Import invariants.
 From iris.program_logic Require Export weakestpre.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
-From IntrusiveAllocators.iris_heap_lang_asm.lib Require Export rw_lock.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm.lib Require Export rw_lock.
 
 Local Definition newlock : val := λ: <>, ref #0.
 Local Definition try_acquire_reader : val :=

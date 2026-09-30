@@ -1,6 +1,6 @@
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang. 
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export spawn.
+From AllSrc.iris_heap_lang_asm Require Export lang. 
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm Require Export spawn.
 
 Definition parN : namespace := nroot .@ "par".
 

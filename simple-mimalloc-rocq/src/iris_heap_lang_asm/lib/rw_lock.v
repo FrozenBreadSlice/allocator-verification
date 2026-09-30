@@ -1,7 +1,7 @@
 From iris.base_logic.lib Require Export invariants.
 From iris.bi.lib Require Export fractional.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
 
 (** A general interface for a reader-writer lock.
 

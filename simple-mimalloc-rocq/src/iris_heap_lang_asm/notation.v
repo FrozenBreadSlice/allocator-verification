@@ -1,4 +1,4 @@
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Export lang.
 
 (** Coercions to make programs easier to type. *)
 Coercion LitInt : Z >-> base_lit.

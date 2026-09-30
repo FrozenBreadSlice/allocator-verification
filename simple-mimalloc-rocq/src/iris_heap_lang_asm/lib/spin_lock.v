@@ -1,9 +1,9 @@
 From iris.base_logic Require Import invariants.
 From iris.program_logic Require Export weakestpre.
 From iris.base_logic Require Import lib.token.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
-From IntrusiveAllocators.iris_heap_lang_asm.lib Require Export lock.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm.lib Require Export lock.
 
 Local Definition newlock : val := λ: <>, ref #false.
 Local Definition try_acquire : val := λ: "l", CAS "l" #false #true.

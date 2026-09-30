@@ -1,8 +1,8 @@
 From iris.proofmode Require Import rocq_tactics reduction spec_patterns.
 From iris.proofmode Require Export proofmode.
 From iris.program_logic Require Import atomic.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export tactics derived_laws.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import class_instances notation.
+From AllSrc.iris_heap_lang_asm Require Export tactics derived_laws.
+From AllSrc.iris_heap_lang_asm Require Import class_instances notation.
 Import uPred.
 
 Lemma tac_wp_expr_eval `{!heapGS_gen hlc Σ} Δ s E Φ e e' :

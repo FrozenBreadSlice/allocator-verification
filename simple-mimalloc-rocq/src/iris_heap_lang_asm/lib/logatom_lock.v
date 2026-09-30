@@ -12,8 +12,8 @@
 
 From iris.base_logic.lib Require Import ghost_var.
 From iris.program_logic Require Export atomic.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation atomic_heap lock.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation atomic_heap lock.
 
 Inductive state := Free | Locked.
 

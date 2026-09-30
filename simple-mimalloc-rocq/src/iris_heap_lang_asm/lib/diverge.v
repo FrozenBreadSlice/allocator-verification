@@ -1,6 +1,6 @@
 From iris.program_logic Require Export weakestpre.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
 
 (** This library provides a [diverge] function that goes into an infinite loop
 when provided with an (arbitrary) argument value. This function can be used to

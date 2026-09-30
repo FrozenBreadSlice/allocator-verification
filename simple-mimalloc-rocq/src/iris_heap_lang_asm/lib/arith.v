@@ -1,6 +1,6 @@
 From iris.program_logic Require Export weakestpre.
-From IntrusiveAllocators.iris_heap_lang_asm Require Export lang.
-From IntrusiveAllocators.iris_heap_lang_asm Require Import proofmode notation.
+From AllSrc.iris_heap_lang_asm Require Export lang.
+From AllSrc.iris_heap_lang_asm Require Import proofmode notation.
 
 (** A library defining binary [minimum] and [maximum] functions, together with
 their expected specs. These operations come up often when working manipulating

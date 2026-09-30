@@ -5,6 +5,7 @@ iris/
 *.vos
 *.vok
 *.glob
+*.aux
 *.lia.cache
 
 # C ignore

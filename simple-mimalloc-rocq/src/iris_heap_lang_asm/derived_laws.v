@@ -102,45 +102,60 @@ Proof.
   setoid_rewrite Z.add_assoc. apply IH.
 Qed.
 
-Lemma twp_allocN s E v n :
+Lemma twp_allocN s E v n a :
   (0 < n)%Z →
-  [[{ True }]] AllocN (Val $ LitV $ LitInt $ n) (Val v) @ s; E
-  [[{ l, RET LitV (LitInt l); l ↦∗ replicate (Z.to_nat n) v ∗
-         [∗ list] i ∈ seq 0 (Z.to_nat n), meta_token (l + (i : nat))%Z ⊤ }]].
+  (0 < a)%Z →
+  [[{ True }]] AllocN (Val $ LitV $ LitInt $ n) 
+                (Val $ LitV $ LitInt $ a) (Val v) @ s; E
+  [[{ l, RET LitV (LitInt l); 
+      ⌜(0 < l)%Z⌝ ∗ ⌜Z.divide a l⌝ ∗
+       l ↦∗ replicate (Z.to_nat n) v ∗
+      [∗ list] i ∈ seq 0 (Z.to_nat n), meta_token (l + (i : nat))%Z ⊤ }]].
 Proof.
-  iIntros (Hzs Φ) "_ HΦ". iApply twp_allocN_seq; [done..|].
-  iIntros (l) "Hlm". iApply "HΦ".
+  iIntros (Hzs Ha Φ) "_ HΦ". iApply twp_allocN_seq; [done..|].
+  iIntros (l) "(H1 & H2 & Hlm)". iApply "HΦ". iFrame.
   iDestruct (big_sepL_sep with "Hlm") as "[Hl $]".
   by iApply seq_array_pointsto_eq.
 Qed.
-Lemma wp_allocN s E v n :
+Lemma wp_allocN s E v n a :
   (0 < n)%Z →
-  {{{ True }}} AllocN (Val $ LitV $ LitInt $ n) (Val v) @ s; E
-  {{{ l, RET LitV (LitInt l); l ↦∗ replicate (Z.to_nat n) v ∗
-         [∗ list] i ∈ seq 0 (Z.to_nat n), meta_token (l + (i : nat))%Z ⊤ }}}.
+  (0 < a)%Z →
+  {{{ True }}} AllocN (Val $ LitV $ LitInt $ n) 
+                (Val $ LitV $ LitInt $ a) (Val v) @ s; E
+  {{{ l, RET LitV (LitInt l); 
+      ⌜(0 < l)%Z⌝ ∗ ⌜Z.divide a l⌝ ∗
+      l ↦∗ replicate (Z.to_nat n) v ∗
+      [∗ list] i ∈ seq 0 (Z.to_nat n), meta_token (l + (i : nat))%Z ⊤ }}}.
 Proof.
-  iIntros (? Φ) "_ HΦ". iApply (twp_wp_step with "HΦ").
+  iIntros (? Ha Φ) "_ HΦ". iApply (twp_wp_step with "HΦ").
   iApply twp_allocN; [auto..|]; iIntros (l) "H HΦ". by iApply "HΦ".
 Qed.
 
-Lemma twp_allocN_vec s E v n :
+Lemma twp_allocN_vec s E v n a :
   (0 < n)%Z →
+  (0 < a)%Z →
   [[{ True }]]
-    AllocN #n v @ s ; E
-  [[{ l, RET #l; l ↦∗ vreplicate (Z.to_nat n) v ∗
-         [∗ list] i ∈ seq 0 (Z.to_nat n), meta_token (l + (i : nat))%Z ⊤ }]].
+    AllocN #n #a v @ s ; E
+  [[{ l, RET #l; 
+      ⌜(0 < l)%Z⌝ ∗ ⌜Z.divide a l⌝ ∗
+      l ↦∗ vreplicate (Z.to_nat n) v ∗
+      [∗ list] i ∈ seq 0 (Z.to_nat n), meta_token (l + (i : nat))%Z ⊤ }]].
 Proof.
-  iIntros (Hzs Φ) "_ HΦ". iApply twp_allocN; [ lia | done | .. ].
-  iIntros (l) "[Hl Hm]". iApply "HΦ". rewrite vec_to_list_replicate. iFrame.
+  iIntros (Hzs Ha Φ) "_ HΦ". iApply twp_allocN; [lia|done|done|].
+  iIntros (l) "[Hl Hm]". iApply "HΦ". rewrite vec_to_list_replicate. 
+  iFrame.
 Qed.
-Lemma wp_allocN_vec s E v n :
+Lemma wp_allocN_vec s E v n a :
   (0 < n)%Z →
+  (0 < a)%Z →
   {{{ True }}}
-    AllocN #n v @ s ; E
-  {{{ l, RET #l; l ↦∗ vreplicate (Z.to_nat n) v ∗
-         [∗ list] i ∈ seq 0 (Z.to_nat n), meta_token (l + (i : nat))%Z ⊤ }}}.
+    AllocN #n #a v @ s ; E
+  {{{ l, RET #l;
+      ⌜(0 < l)%Z⌝ ∗ ⌜Z.divide a l⌝ ∗
+      l ↦∗ vreplicate (Z.to_nat n) v ∗
+      [∗ list] i ∈ seq 0 (Z.to_nat n), meta_token (l + (i : nat))%Z ⊤ }}}.
 Proof.
-  iIntros (? Φ) "_ HΦ". iApply (twp_wp_step with "HΦ").
+  iIntros (? Ha Φ) "_ HΦ". iApply (twp_wp_step with "HΦ").
   iApply twp_allocN_vec; [auto..|]; iIntros (l) "H HΦ". by iApply "HΦ".
 Qed.
 

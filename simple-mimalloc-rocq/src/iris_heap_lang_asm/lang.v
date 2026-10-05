@@ -108,7 +108,7 @@ Inductive expr :=
   | InjR (e : expr)
   | Case (e0 : expr) (e1 : expr) (e2 : expr)
   (* Heap *)
-  | AllocN (e1 e2 : expr) (* array length (positive number), initial value *)
+  | AllocN (e0 : expr) (e1 : expr) (e2 : expr) (* array length (positive number), alignment, initial value *)
   | Free (e : expr)
   | Load (e : expr)
   | Store (e1 : expr) (e2 : expr)
@@ -243,8 +243,8 @@ Proof.
      | InjR e, InjR e' => cast_if (decide (e = e'))
      | Case e0 e1 e2, Case e0' e1' e2' =>
         cast_if_and3 (decide (e0 = e0')) (decide (e1 = e1')) (decide (e2 = e2'))
-     | AllocN e1 e2, AllocN e1' e2' =>
-        cast_if_and (decide (e1 = e1')) (decide (e2 = e2'))
+     | AllocN e0 e1 e2, AllocN e0' e1' e2' =>
+        cast_if_and3 (decide (e0 = e0')) (decide (e1 = e1')) (decide (e2 = e2'))
      | Free e, Free e' =>
         cast_if (decide (e = e'))
      | Load e, Load e' => cast_if (decide (e = e'))
@@ -330,7 +330,7 @@ Proof.
      | InjR e => GenNode 10 [go e]
      | Case e0 e1 e2 => GenNode 11 [go e0; go e1; go e2]
      | Fork e => GenNode 12 [go e]
-     | AllocN e1 e2 => GenNode 13 [go e1; go e2]
+     | AllocN e0 e1 e2 => GenNode 13 [go e0; go e1; go e2]
      | Free e => GenNode 14 [go e]
      | Load e => GenNode 15 [go e]
      | Store e1 e2 => GenNode 16 [go e1; go e2]
@@ -367,7 +367,7 @@ Proof.
      | GenNode 10 [e] => InjR (go e)
      | GenNode 11 [e0; e1; e2] => Case (go e0) (go e1) (go e2)
      | GenNode 12 [e] => Fork (go e)
-     | GenNode 13 [e1; e2] => AllocN (go e1) (go e2)
+     | GenNode 13 [e0; e1; e2] => AllocN (go e0) (go e1) (go e2)
      | GenNode 14 [e] => Free (go e)
      | GenNode 15 [e] => Load (go e)
      | GenNode 16 [e1; e2] => Store (go e1) (go e2)
@@ -427,8 +427,9 @@ Inductive ectx_item :=
   | InjLCtx
   | InjRCtx
   | CaseCtx (e1 : expr) (e2 : expr)
-  | AllocNLCtx (v2 : val)
-  | AllocNRCtx (e1 : expr)
+  | AllocNLCtx (v1 : val) (v2 : val)
+  | AllocNMCtx (e0 : expr) (v2 : val)
+  | AllocNRCtx (e0 : expr) (e1 : expr)
   | FreeCtx
   | LoadCtx
   | StoreLCtx (v2 : val)
@@ -466,8 +467,9 @@ Fixpoint fill_item (Ki : ectx_item) (e : expr) : expr :=
   | InjLCtx => InjL e
   | InjRCtx => InjR e
   | CaseCtx e1 e2 => Case e e1 e2
-  | AllocNLCtx v2 => AllocN e (Val v2)
-  | AllocNRCtx e1 => AllocN e1 e
+  | AllocNLCtx v1 v2 => AllocN e (Val v1) (Val v2)
+  | AllocNMCtx e0 v2 => AllocN e0 e (Val v2)
+  | AllocNRCtx e0 e1 => AllocN e0 e1 e 
   | FreeCtx => Free e
   | LoadCtx => Load e
   | StoreLCtx v2 => Store e (Val v2)
@@ -501,7 +503,7 @@ Fixpoint subst (x : string) (v : val) (e : expr)  : expr :=
   | InjL e => InjL (subst x v e)
   | InjR e => InjR (subst x v e)
   | Case e0 e1 e2 => Case (subst x v e0) (subst x v e1) (subst x v e2)
-  | AllocN e1 e2 => AllocN (subst x v e1) (subst x v e2)
+  | AllocN e0 e1 e2 => AllocN (subst x v e0) (subst x v e1) (subst x v e2)
   | Free e => Free (subst x v e)
   | Load e => Load (subst x v e)
   | Xchg e1 e2 => Xchg (subst x v e1) (subst x v e2)
@@ -656,10 +658,13 @@ Inductive base_step : expr → state → list observation → expr → state →
      base_step (Case (Val $ InjLV v) e1 e2) σ [] (App e1 (Val v)) σ []
   | CaseRS v e1 e2 σ :
      base_step (Case (Val $ InjRV v) e1 e2) σ [] (App e2 (Val v)) σ []
-  | AllocNS n v σ l :
+  | AllocNS n a v σ l :
      (0 < n)%Z →
+     (0 < a)%Z →
+     (0 < l)%Z →
+     (Z.divide a l) → 
      (∀ i, (0 ≤ i)%Z → (i < n)%Z → σ.(heap) !! (l + i)%Z = None) →
-     base_step (AllocN (Val $ LitV $ LitInt n) (Val v)) σ
+     base_step (AllocN (Val $ LitV $ LitInt n) (Val $ LitV $ LitInt a) (Val v)) σ
                []
                (Val $ LitV $ LitInt l) (state_init_heap l n v σ)
                []
@@ -735,27 +740,116 @@ Proof.
   revert Ki1. induction Ki2; intros Ki1; induction Ki1; naive_solver eauto with f_equal.
 Qed.
 
+Definition up_align (l : loc) (a : Z) : loc := ((l + (a - 1)) `quot` a * a)%Z.
+
+Lemma up_align_aligns_up_1 l a : 
+  let x := up_align l a in 
+  (0 < l)%Z → 
+  (0 < a)%Z →
+  Z.divide a x.
+Proof. 
+  simpl. intros. unfold up_align.
+  exists ((l + (a - 1)) `quot` a)%Z. done.
+Qed.
+
+Lemma Z_positive_cases n : 
+  (0 ≤ n)%Z -> 
+  (n = 0)%Z ∨ (∃ m, n = Z.succ m ∧ m >= 0)%Z.
+Proof.
+  intros. destruct n; [lia| |lia].
+  right. exists (Z.pred (Z.pos p)). lia.
+Qed.
+
+Lemma up_align_aligns_up_2 l a : 
+  let x := up_align l a in 
+  (0 < l)%Z → 
+  (0 < a)%Z →
+  (l ≤ x)%Z.
+Proof.
+  simpl. intros. unfold up_align.
+  Search (_ `quot` _)%Z.
+  assert (l = a * l `quot` a + l `rem` a)%Z as Heql;
+  [apply Z.quot_rem'|].
+  remember (l `quot` a)%Z as x.
+  remember (l `rem` a)%Z as r.
+  specialize (Z.rem_bound_pos_pos l a).
+  intros. assert (0 ≤ l)%Z by lia. specialize (H1 H0 H2).
+  rewrite Heql. rewrite -Heqr in H1. destruct H1.
+  destruct (Z_positive_cases r H1); [rewrite H4|]. 
+  { rewrite Z.add_0_r Z.mul_comm. 
+    apply Z.mul_le_mono_nonneg_r; [lia|].
+    apply Z.quot_le_lower_bound; lia. }
+  destruct H4 as (m & -> & Hm).
+  replace (a * x + Z.succ m + (a - 1))%Z 
+  with ((x + 1) * a + m)%Z by lia.
+  rewrite Z.quot_add_l; [|lia|].
+  { assert (0 ≤ (m `quot` a))%Z; [apply Z.quot_pos; lia|]. lia. }
+  assert (0 ≤ x)%Z; [|lia]. rewrite Heqx. 
+  apply Z.quot_pos; lia.
+Qed.
+
+Lemma up_align_aligns_up l a : 
+  let x := up_align l a in 
+  (0 < l)%Z → 
+  (0 < a)%Z →
+  (l ≤ x)%Z ∧ Z.divide a x.
+Proof. 
+  intros. split.
+  - apply up_align_aligns_up_2; done.
+  - apply up_align_aligns_up_1; done.
+Qed.
+
 Definition loc_fresh (ls : gset loc) : loc :=
   set_fold (λ k r, Z.max (1 + k)%Z r) 1 ls.
 
-Lemma fresh_fresh ls i : (0 ≤ i)%Z → (loc_fresh ls + i)%Z ∉ ls.
+Lemma fresh_fresh_0 ls i : (0 ≤ i)%Z → (loc_fresh ls + i)%Z ∉ ls.
 Proof.
   intros Hi. cut (∀ l, l ∈ ls → (l < ((loc_fresh ls) + i)%Z)%Z).
   { intros help Hf%help. simpl in *. lia. }
+  About set_fold_ind_L.
   apply (set_fold_ind_L (λ r ls, ∀ l, l ∈ ls → (l < r + i)%Z));
     set_solver by eauto with lia.
 Qed.
 
-Lemma alloc_fresh v n σ :
-  let l := loc_fresh (dom σ.(heap)) in
+Lemma loc_fresh_positive ls : 
+  (0 < loc_fresh ls)%Z.
+Proof.
+  unfold loc_fresh. 
+  apply (set_fold_ind_L (λ r ls, (0 < r)%Z)); [lia|intros; lia].
+Qed.
+
+Lemma loc_fresh_up_align_positive ls a : 
+  (0 < a)%Z -> (0 < up_align (loc_fresh ls) a)%Z.
+Proof.
+  specialize (loc_fresh_positive ls). intros.
+  specialize (up_align_aligns_up_2 (loc_fresh ls) a H H0). 
+  intros. lia.
+Qed.
+
+Lemma fresh_fresh ls i a : 
+  (0 < a)%Z -> (0 ≤ i)%Z → ((up_align (loc_fresh ls) a) + i)%Z ∉ ls.
+Proof.
+  intros.    
+  specialize (up_align_aligns_up (loc_fresh ls) a). simpl. intros.
+  specialize (loc_fresh_positive ls). intros.
+  destruct (H1 H2 H) as [Ha Hb]. 
+  assert (∃ x, 0 <= x /\ loc_fresh ls + x = up_align (loc_fresh ls) a)%Z.
+  { intros. exists (up_align (loc_fresh ls) a - loc_fresh ls)%Z. split; lia. }
+  destruct H3, H3. rewrite -H4 -Z.add_assoc. apply fresh_fresh_0. lia.
+Qed.
+
+Lemma alloc_fresh v a n σ :
+  let l := up_align (loc_fresh (dom σ.(heap))) a in
   (0 < n)%Z →
-  base_step (AllocN ((Val $ LitV $ LitInt $ n)) (Val v)) σ []
+  (0 < a)%Z →
+  base_step (AllocN ((Val $ LitV $ LitInt $ n)) (Val $ LitV $ LitInt $ a) (Val v)) σ []
             (Val $ LitV $ LitInt l) (state_init_heap l n v σ) [].
 Proof.
-  intros.
-  apply AllocNS; first done.
-  intros. apply not_elem_of_dom.
-  by apply fresh_fresh.
+  specialize (up_align_aligns_up (loc_fresh (dom (heap σ))) a). simpl. intros.
+  specialize (loc_fresh_positive (dom (heap σ))). intros.
+  destruct (H H2 H1) as [Ha Hb]. 
+  apply AllocNS; try done; [lia|]. 
+  intros. apply not_elem_of_dom. apply fresh_fresh; lia. 
 Qed.
 
 Lemma new_proph_id_fresh σ :

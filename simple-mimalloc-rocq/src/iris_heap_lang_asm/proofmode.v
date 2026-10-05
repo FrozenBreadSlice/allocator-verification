@@ -287,8 +287,9 @@ Implicit Types Δ : envs (uPredI (iResUR Σ)).
 Implicit Types v : val.
 Implicit Types z : Z.
 
-Lemma tac_wp_allocN Δ Δ' s E j K v n Φ :
+Lemma tac_wp_allocN Δ Δ' s E j K v n a Φ :
   (0 < n)%Z →
+  (0 < a)%Z →
   MaybeIntoLaterNEnvs 1 Δ Δ' →
   (∀ l,
     match envs_app false (Esnoc Enil j (array l (DfracOwn 1) (replicate (Z.to_nat n) v))) Δ' with
@@ -296,33 +297,37 @@ Lemma tac_wp_allocN Δ Δ' s E j K v n Φ :
        envs_entails Δ'' (WP fill K (Val $ LitV $ LitInt l) @ s; E {{ Φ }})
     | None => False
     end) →
-  envs_entails Δ (WP fill K (AllocN (Val $ LitV $ LitInt n) (Val v)) @ s; E {{ Φ }}).
+  envs_entails Δ (WP fill K (AllocN (Val $ LitV $ LitInt n) (Val $ LitV $ LitInt a) (Val v)) @ s; E {{ Φ }}).
 Proof.
-  rewrite envs_entails_unseal=> ? ? HΔ.
+  rewrite envs_entails_unseal=> ? ? ? HΔ.
   rewrite -wp_bind. eapply wand_apply; first by apply wand_entails, wp_allocN.
   rewrite left_id into_laterN_env_sound; apply later_mono, forall_intro=> l.
   specialize (HΔ l).
   destruct (envs_app _ _ _) as [Δ''|] eqn:HΔ'; [ | contradiction ].
   rewrite envs_app_sound //; simpl.
-  apply wand_intro_l. by rewrite (sep_elim_l (l ↦∗ _)%I) right_id wand_elim_r.
+  apply wand_intro_l. rewrite (sep_elim_l (l ↦∗ _)%I) right_id.
+  by rewrite -sep_assoc -sep_assoc 2!sep_elim_r wand_elim_r.
 Qed.
-Lemma tac_twp_allocN Δ s E j K v n Φ :
+Lemma tac_twp_allocN Δ s E j K v n a Φ :
   (0 < n)%Z →
+  (0 < a)%Z →
   (∀ l,
     match envs_app false (Esnoc Enil j (array l (DfracOwn 1) (replicate (Z.to_nat n) v))) Δ with
     | Some Δ' =>
        envs_entails Δ' (WP fill K (Val $ LitV $ LitInt l) @ s; E [{ Φ }])
     | None => False
     end) →
-  envs_entails Δ (WP fill K (AllocN (Val $ LitV $ LitInt n) (Val v)) @ s; E [{ Φ }]).
+  envs_entails Δ (WP fill K (AllocN (Val $ LitV $ LitInt n)  
+                                (Val $ LitV $ LitInt a) (Val v)) @ s; E [{ Φ }]).
 Proof.
-  rewrite envs_entails_unseal=> ? HΔ.
+  rewrite envs_entails_unseal=> ? ? HΔ.
   rewrite -twp_bind. eapply wand_apply; first by apply wand_entails, twp_allocN.
   rewrite left_id. apply forall_intro=> l.
   specialize (HΔ l).
   destruct (envs_app _ _ _) as [Δ'|] eqn:HΔ'; [ | contradiction ].
   rewrite envs_app_sound //; simpl.
-  apply wand_intro_l. by rewrite (sep_elim_l (l ↦∗ _)%I) right_id wand_elim_r.
+  apply wand_intro_l. by rewrite (sep_elim_l (l ↦∗ _)%I) right_id 
+  -sep_assoc -sep_assoc 2!sep_elim_r wand_elim_r.
 Qed.
 
 Lemma tac_wp_alloc Δ Δ' s E j K v Φ :
@@ -803,7 +808,7 @@ Tactic Notation "wp_alloc" ident(l) "as" constr(H) :=
         first
           [reshape_expr e ltac:(fun K e' => eapply (tac_wp_allocN _ _ _ _ Htmp K))
           |fail 1 "wp_alloc: cannot find 'Alloc' in" e];
-        [idtac|tc_solve
+        [idtac|idtac|tc_solve
          |finish ()]
     in (process_single ()) || (process_array ())
   | |- envs_entails _ (twp ?s ?E ?e ?Q) =>
@@ -817,7 +822,7 @@ Tactic Notation "wp_alloc" ident(l) "as" constr(H) :=
         first
           [reshape_expr e ltac:(fun K e' => eapply (tac_twp_allocN _ _ _ Htmp K))
           |fail 1 "wp_alloc: cannot find 'Alloc' in" e];
-        [idtac
+        [idtac|idtac (*TODO(Ben): is this extra idtac correct?*)
         |finish ()]
     in (process_single ()) || (process_array ())
   | _ => fail "wp_alloc: not a 'wp'"

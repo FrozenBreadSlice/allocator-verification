@@ -27,8 +27,8 @@ Definition array_copy_to : val :=
          "array_copy_to" ("dst" + #1) ("src" + #1) ("n" - #1).
 
 Definition array_clone : val :=
-  λ: "src" "n",
-    let: "dst" := AllocN "n" #() in
+  λ: "src" "n" "a",
+    let: "dst" := AllocN "n" "a" #() in
     array_copy_to "dst" "src" "n";;
     "dst".
 
@@ -42,8 +42,8 @@ Local Definition array_init_loop : val :=
          "loop" "src" ("i" + #1) "n" "f".
 
 Definition array_init : val :=
-  λ: "n" "f",
-    let: "src" := AllocN "n" #() in
+  λ: "n" "a" "f",
+    let: "src" := AllocN "n" "a" #() in
     array_init_loop "src" #0 "n" "f";;
     "src".
 
@@ -94,30 +94,31 @@ Section proof.
     iApply (twp_array_copy_to with "H"); [auto..|]; iIntros "H HΦ". by iApply "HΦ".
   Qed.
 
-  Lemma twp_array_clone stk E l dq vl n :
+  Lemma twp_array_clone stk E l dq vl n a :
     Z.of_nat (length vl) = n →
     (0 < n)%Z →
+    (0 < a)%Z →
     [[{ l ↦∗{dq} vl }]]
-      array_clone #l #n @ stk; E
+      array_clone #l #n #a @ stk; E
     [[{ l', RET #l'; l' ↦∗ vl ∗ l ↦∗{dq} vl }]].
   Proof.
-    iIntros (Hvl Hn Φ) "Hvl HΦ".
-    wp_lam.
-    wp_alloc dst as "Hdst"; first by auto.
+    iIntros (Hvl Hn Ha Φ) "Hvl HΦ".
+    wp_lam. wp_alloc dst as "Hdst"; [done|done|]. 
     wp_smart_apply (twp_array_copy_to with "[$Hdst $Hvl]") as "[Hdst Hl]".
     - rewrite length_replicate Z2Nat.id; lia.
     - auto.
     - wp_pures.
       iApply "HΦ"; by iFrame.
   Qed.
-  Lemma wp_array_clone stk E l dq vl n :
+  Lemma wp_array_clone stk E l dq vl n a :
     Z.of_nat (length vl) = n →
     (0 < n)%Z →
+    (0 < a)%Z →
     {{{ l ↦∗{dq} vl }}}
-      array_clone #l #n @ stk; E
+      array_clone #l #n #a @ stk; E
     {{{ l', RET #l'; l' ↦∗ vl ∗ l ↦∗{dq} vl }}}.
   Proof.
-    iIntros (? ? Φ) "H HΦ". iApply (twp_wp_step with "HΦ").
+    iIntros (? ? ? Φ) "H HΦ". iApply (twp_wp_step with "HΦ").
     iApply (twp_array_clone with "H"); [auto..|]; iIntros (l') "H HΦ". by iApply "HΦ".
   Qed.
 
@@ -181,17 +182,18 @@ Section proof.
       - iEval (rewrite /= Nat.add_0_r; setoid_rewrite Nat.add_succ_r). iFrame.
     Qed.
 
-    Lemma wp_array_init stk E n f :
+    Lemma wp_array_init stk E n a f :
       (0 < n)%Z →
+      (0 < a)%Z →
       {{{
         [∗ list] i ∈ seq 0 (Z.to_nat n), WP f #(i : nat) @ stk; E {{ Q i }}
       }}}
-        array_init #n f @ stk; E
+        array_init #n #a f @ stk; E
       {{{ l vs, RET #l;
         ⌜Z.of_nat (length vs) = n⌝ ∗ l ↦∗ vs ∗ [∗ list] k↦v ∈ vs, Q k v
       }}}.
     Proof.
-      iIntros (Hn Φ) "Hf HΦ". wp_lam. wp_alloc l as "Hl"; first done.
+      iIntros (Hn Ha Φ) "Hf HΦ". wp_lam. wp_alloc l as "Hl"; [done..|].
       wp_smart_apply (wp_array_init_loop _ _ _ 0 n (Z.to_nat n)
         with "[Hl $Hf] [HΦ]") as "!> %vs".
       { by rewrite /= Z2Nat.id; last lia. }
@@ -201,17 +203,18 @@ Section proof.
       { iPureIntro. by rewrite Hlen Z2Nat.id; last lia. }
       rewrite Z.add_0_r. iFrame.
     Qed.
-    Lemma twp_array_init stk E n f :
+    Lemma twp_array_init stk E n a f :
       (0 < n)%Z →
+      (0 < a)%Z →
       [[{
         [∗ list] i ∈ seq 0 (Z.to_nat n), WP f #(i : nat) @ stk; E [{ Q i }]
       }]]
-        array_init #n f @ stk; E
+        array_init #n #a f @ stk; E
       [[{ l vs, RET #l;
         ⌜Z.of_nat (length vs) = n⌝ ∗ l ↦∗ vs ∗ [∗ list] k↦v ∈ vs, Q k v
       }]].
     Proof.
-      iIntros (Hn Φ) "Hf HΦ". wp_lam. wp_alloc l as "Hl"; first done.
+      iIntros (Hn Ha Φ) "Hf HΦ". wp_lam. wp_alloc l as "Hl"; [done..|].
       wp_smart_apply (twp_array_init_loop _ _ _ 0 n (Z.to_nat n)
         with "[Hl $Hf] [HΦ]") as "%vs".
       { by rewrite /= Z2Nat.id; last lia. }
@@ -238,34 +241,36 @@ Section proof.
       iExists (x :: xs). by iFrame.
     Qed.
 
-    Lemma wp_array_init_fmap stk E n f :
+    Lemma wp_array_init_fmap stk E n a f :
       (0 < n)%Z →
+      (0 < a)%Z →
       {{{
         [∗ list] i ∈ seq 0 (Z.to_nat n),
           WP f #(i : nat) @ stk; E {{ v, ∃ x, ⌜v = g x⌝ ∗ Q i x }}
       }}}
-        array_init #n f @ stk; E
+        array_init #n #a f @ stk; E
       {{{ l xs, RET #l;
         ⌜Z.of_nat (length xs) = n⌝ ∗ l ↦∗ (g <$> xs) ∗ [∗ list] k↦x ∈ xs, Q k x
       }}}.
     Proof.
-      iIntros (Hn Φ) "Hf HΦ". iApply (wp_array_init with "Hf"); first done.
+      iIntros (Hn Ha Φ) "Hf HΦ". iApply (wp_array_init with "Hf"); [done..|].
       iIntros "!>" (l vs). iDestruct 1 as (<-) "[Hl Hvs]".
       iDestruct (big_sepL_exists_eq with "Hvs") as (xs ->) "Hxs".
       iApply "HΦ". iFrame "Hl Hxs". by rewrite length_fmap.
     Qed.
-    Lemma twp_array_init_fmap stk E n f :
+    Lemma twp_array_init_fmap stk E n a f :
       (0 < n)%Z →
+      (0 < a)%Z →
       [[{
         [∗ list] i ∈ seq 0 (Z.to_nat n),
           WP f #(i : nat) @ stk; E [{ v, ∃ x, ⌜v = g x⌝ ∗ Q i x }]
       }]]
-        array_init #n f @ stk; E
+        array_init #n #a f @ stk; E
       [[{ l xs, RET #l;
         ⌜Z.of_nat (length xs) = n⌝ ∗ l ↦∗ (g <$> xs) ∗ [∗ list] k↦x ∈ xs, Q k x
       }]].
     Proof.
-      iIntros (Hn Φ) "Hf HΦ". iApply (twp_array_init with "Hf"); first done.
+      iIntros (Hn Ha Φ) "Hf HΦ". iApply (twp_array_init with "Hf"); [done..|].
       iIntros (l vs). iDestruct 1 as (<-) "[Hl Hvs]".
       iDestruct (big_sepL_exists_eq with "Hvs") as (xs ->) "Hxs".
       iApply "HΦ". iFrame "Hl Hxs". by rewrite length_fmap.

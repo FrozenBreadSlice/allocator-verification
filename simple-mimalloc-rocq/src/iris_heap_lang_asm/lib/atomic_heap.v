@@ -217,7 +217,7 @@ Section proof.
   Lemma primitive_alloc_spec (v : val) :
     True -∗ {{{ True }}} primitive_alloc v {{{ l, RET #l; l ↦ v }}}.
   Proof.
-    iIntros "_ %Φ !> _ HΦ". wp_lam. wp_alloc l. iApply "HΦ". done.
+    iIntros "_ %Φ !> _ HΦ". wp_lam. wp_alloc l as "H". iApply "HΦ". done.
   Qed.
 
   Lemma primitive_free_spec (l : loc) (v : val) :

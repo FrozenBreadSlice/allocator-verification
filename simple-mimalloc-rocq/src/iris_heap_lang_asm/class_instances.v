@@ -42,7 +42,7 @@ Section atomic.
   Global Instance fork_atomic s e : Atomic s (Fork e).
   Proof. solve_atomic. Qed.
 
-  Global Instance alloc_atomic s v w : Atomic s (AllocN (Val v) (Val w)).
+  Global Instance alloc_atomic s a v w : Atomic s (AllocN (Val v) (Val a) (Val w)).
   Proof. solve_atomic. Qed.
   Global Instance free_atomic s v : Atomic s (Free (Val v)).
   Proof. solve_atomic. Qed.

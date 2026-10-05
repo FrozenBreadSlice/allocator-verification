@@ -41,7 +41,7 @@ Fixpoint erase_expr (e : expr) : expr :=
   | InjR e => InjR (erase_expr e)
   | Case e0 e1 e2 => Case (erase_expr e0) (erase_expr e1) (erase_expr e2)
   | Fork e => Fork (erase_expr e)
-  | AllocN e1 e2 => AllocN (erase_expr e1) (erase_expr e2)
+  | AllocN e0 e1 e2 => AllocN (erase_expr e0) (erase_expr e1) (erase_expr e2)
   | Free e => Free (erase_expr e)
   | Load e => Load (erase_expr e)
   | Xchg e1 e2 => Xchg (erase_expr e1) (erase_expr e2)
@@ -95,8 +95,9 @@ Fixpoint erase_ectx_item (Ki : ectx_item) : list ectx_item :=
   | InjLCtx => [InjLCtx]
   | InjRCtx => [InjRCtx]
   | CaseCtx e1 e2 => [CaseCtx (erase_expr e1) (erase_expr e2)]
-  | AllocNLCtx v2 => [AllocNLCtx (erase_val v2)]
-  | AllocNRCtx e1 => [AllocNRCtx (erase_expr e1)]
+  | AllocNLCtx v1 v2 => [AllocNLCtx (erase_val v1) (erase_val v2)]
+  | AllocNMCtx e0 v2 => [AllocNMCtx (erase_expr e0) (erase_val v2)]
+  | AllocNRCtx e0 e1 => [AllocNRCtx (erase_expr e0) (erase_expr e1)]
   | FreeCtx => [FreeCtx]
   | LoadCtx => [LoadCtx]
   | XchgLCtx v2 => [XchgLCtx (erase_val v2)]
@@ -249,13 +250,16 @@ Proof. by repeat econstructor; rewrite !erase_expr_subst'. Qed.
 Lemma erased_base_step_base_step_NewProph σ :
   base_steps_to_erasure_of NewProph σ #LitPoison (erase_state σ) [].
 Proof. eexists _, _, _, _; split; first eapply new_proph_id_fresh; done. Qed.
-Lemma erased_base_step_base_step_AllocN n v σ l :
+Lemma erased_base_step_base_step_AllocN n a v σ l :
   (0 < n)%Z →
+  (0 < a)%Z →
+  (0 < l)%Z →
+  (Z.divide a l) →
   (∀ i : Z, (0 ≤ i)%Z → (i < n)%Z → erase_heap (heap σ) !! (l + i)%Z = None) →
   base_steps_to_erasure_of
-    (AllocN #n v) σ #l (state_init_heap l n (erase_val v) (erase_state σ)) [].
+    (AllocN #n #a v) σ #l (state_init_heap l n (erase_val v) (erase_state σ)) [].
 Proof.
-  eexists _, _, _, _; simpl; split;
+  eexists _, _, _, _; simpl; split; 
     first econstructor; try setoid_rewrite <- lookup_erase_heap_None;
       rewrite ?erase_heap_insert /=; eauto using erase_state_init.
 Qed.
@@ -498,21 +502,21 @@ Lemma non_resolve_prim_step_matched_by_erased_steps_ectx_item
 Proof.
   intros Hnv Hnr Hsf He1 IH.
   destruct Ki; simplify_eq/=;
-    repeat
-      match goal with
-      | H : erase_expr ?e = _ |- _ => destruct e; simplify_eq/=; try done
-      | H : context [erased_new_proph] |- _ =>
-        rewrite /erased_new_proph in H; simplify_eq/=
-      | |- prim_step_matched_by_erased_steps ?e _ _ _ _ =>
-        let tac K e :=
-            lazymatch K with
-            | [] => fail
-            | _ => apply (prim_step_matched_by_erased_steps_ectx K);
-                    apply IH; [done| by eapply (not_stuck_fill_inv (fill K))]
-            end
-        in
-        reshape_expr e tac
-      end.
+  repeat
+    match goal with
+    | H : erase_expr ?e = _ |- _ => destruct e; simplify_eq/=; try done
+    | H : context [erased_new_proph] |- _ =>
+      rewrite /erased_new_proph in H; simplify_eq/=
+    | |- prim_step_matched_by_erased_steps ?e _ _ _ _ =>
+      let tac K e :=
+          lazymatch K with
+          | [] => fail
+          | _ => apply (prim_step_matched_by_erased_steps_ectx K);
+                  apply IH; [done| by eapply (not_stuck_fill_inv (fill K))]
+          end
+      in
+      reshape_expr e tac
+    end.
 Qed.
 
 Lemma prim_step_matched_by_erased_steps_ectx_item Ki K e1 e1' σ1 e2 σ2 efs κ :
@@ -695,11 +699,14 @@ Proof.
   apply bin_op_eval_erase; eauto.
 Qed.
 
-Lemma base_step_erased_prim_step_allocN σ l n v:
+Lemma base_step_erased_prim_step_allocN σ l n a v:
   (0 < n)%Z →
+  (0 < a)%Z →
+  (0 < l)%Z →
+  (Z.divide a l) →
   (∀ i : Z, (0 ≤ i)%Z → (i < n)%Z → heap σ !! (l + i)%Z = None) →
   ∃ e2' σ2' ef',
-    prim_step (AllocN #n (erase_val v)) (erase_state σ) [] e2' σ2' ef'.
+    prim_step (AllocN #n #a (erase_val v)) (erase_state σ) [] e2' σ2' ef'.
 Proof.
   do 3 eexists; apply base_prim_step; econstructor; eauto.
   intros; rewrite lookup_erase_heap_None; eauto.

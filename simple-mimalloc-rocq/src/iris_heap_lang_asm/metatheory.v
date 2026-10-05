@@ -20,9 +20,9 @@ Fixpoint is_closed_expr (X : stringset) (e : expr) : bool :=
   | Rec f x e => is_closed_expr (set_binder_insert f (set_binder_insert x X)) e
   | UnOp _ e | Fst e | Snd e | InjL e | InjR e | Fork e | Free e | Load e =>
      is_closed_expr X e
-  | App e1 e2 | BinOp _ e1 e2 | Pair e1 e2 | AllocN e1 e2 | Store e1 e2 | Xchg e1 e2 | FAA e1 e2 =>
+  | App e1 e2 | BinOp _ e1 e2 | Pair e1 e2 | Store e1 e2 | Xchg e1 e2 | FAA e1 e2 =>
      is_closed_expr X e1 && is_closed_expr X e2
-  | If e0 e1 e2 | Case e0 e1 e2 | CmpXchg e0 e1 e2 | Resolve e0 e1 e2 =>
+  | If e0 e1 e2 | Case e0 e1 e2 | CmpXchg e0 e1 e2 | Resolve e0 e1 e2 | AllocN e0 e1 e2 =>
      is_closed_expr X e0 && is_closed_expr X e1 && is_closed_expr X e2
   | NewProph => true
   end
@@ -51,7 +51,7 @@ Fixpoint subst_map (vs : gmap string val) (e : expr) : expr :=
   | InjR e => InjR (subst_map vs e)
   | Case e0 e1 e2 => Case (subst_map vs e0) (subst_map vs e1) (subst_map vs e2)
   | Fork e => Fork (subst_map vs e)
-  | AllocN e1 e2 => AllocN (subst_map vs e1) (subst_map vs e2)
+  | AllocN e1 e2 e3 => AllocN (subst_map vs e1) (subst_map vs e2) (subst_map vs e3)
   | Free e => Free (subst_map vs e)
   | Load e => Load (subst_map vs e)
   | Store e1 e2 => Store (subst_map vs e1) (subst_map vs e2)

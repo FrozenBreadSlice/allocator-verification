@@ -54,6 +54,14 @@ Section Dcycle.
     reverse_singleton !fmap_app /=. by rewrite !Cycle.pred_rotate.
   Qed.
 
+  Lemma pred_unique (c : loc) (L : list loc) : 
+    is_dcycle c L ⊢ is_dcycle c L ∗ ⌜NoDup (c::L)⌝. 
+  Proof. 
+    iIntros "(H1 & H2)".
+    iPoseProof (Cycle.pred_unique with "H1") as "(H1 & Hd)".
+    iFrame.
+  Qed.
+
   Definition new : val := λ: "l",
       Cycle.new ("l" + #0) ;;
       Cycle.new ("l" + #1).

@@ -43,6 +43,63 @@ Section seq.
     - iApply bi.sep_assoc'. 
   Qed.
 
+  Lemma pred_start_unique {s e : loc} (L R : list loc) :
+    is_seq s (L ++ s :: R) e ⊢ False.
+  Proof.
+    iIntros "H". destruct L.
+    - simpl. destruct R; simpl.
+      + iDestruct "H" as "(H1 & H2)".
+        iCombine "H1" "H2" gives %[H1 H2].
+        auto.
+      + iDestruct "H" as "(H1 & H2 & H3)".
+        iCombine "H1" "H2" gives %[H1 H2].
+        auto.
+    - iAssert (is_seq s (l :: L) s ∗ is_seq s R e)%I with "[H]" as "H".
+      + by iApply split.
+      + destruct R; simpl.
+        * iDestruct "H" as "((H1 & H2) & H3)".
+          iCombine "H1" "H3" gives %[H1 H2].
+          auto.
+        * iDestruct "H" as "((H1 & H2) & H3 & H4)".
+          iCombine "H1" "H3" gives %[H1 H2].
+          auto.
+  Qed.
+
+  Lemma pred_start_unique_elem_of {s e : loc} (L : list loc) :
+    s ∈ L -> is_seq s L e ⊢ False.
+  Proof.
+    iIntros (H) "H".
+    assert (∃ L1 L2, L = L1 ++ s :: L2).
+    { apply list_elem_of_In in H. by apply In_split in H. } 
+    destruct H0 as (L1 & L2 & ->).
+    by iApply pred_start_unique. 
+  Qed.
+
+  Lemma pred_list_unique {s e : loc} (L : list loc) : 
+    is_seq s L e ⊢ is_seq s L e ∗ ⌜NoDup L⌝. 
+  Proof.
+    iInduction L as [|x L IH] forall (s e); simpl; iIntros "H".
+    { iFrame. iPureIntro. by apply NoDup_nil. }
+    iDestruct "H" as "(Hs & His)". iSpecialize ("IH" with "His").
+    destruct (decide (x ∈ L)).
+    - iPoseProof (pred_start_unique_elem_of) as "H"; [apply e0|]. 
+      iDestruct "IH" as "(H' & H'')". iSpecialize ("H" with "H'").
+      by iExFalso.
+    - iDestruct "IH" as "(H & %H')". iFrame. iPureIntro.
+      by apply NoDup_cons_2.
+  Qed.
+
+  Lemma pred_unique {s e : loc} (L : list loc) : 
+    is_seq s L e ⊢ is_seq s L e ∗ ⌜NoDup (s::L)⌝. 
+  Proof.
+    iIntros "H'". destruct (decide (s ∈ L)).
+    - iPoseProof (pred_start_unique_elem_of) as "H"; [apply e0|]. 
+      iSpecialize ("H" with "H'"). by iExFalso.
+    - iPoseProof (pred_list_unique with "H'") as "H". 
+      iDestruct "H" as "(H & %H)". iFrame. iPureIntro.
+      by apply NoDup_cons_2.
+  Qed.
+
   Lemma new_spec {s e: loc} {v} :
     {{{ s ↦ v }}} 
       new #s #e

@@ -18,6 +18,10 @@ Section cycle.
     unfold is_cycle. rewrite Seq.split /=. by apply :comm.
   Qed.
 
+  Lemma pred_unique {c} (L : list loc) : 
+    is_cycle c L ⊢ is_cycle c L ∗ ⌜NoDup (c::L)⌝. 
+  Proof. apply Seq.pred_unique. Qed.
+
   Definition new : val      :=  λ: "l", Seq.new "l" "l".
 
   Definition is_empty : val := λ: "l", !"l" = "l".

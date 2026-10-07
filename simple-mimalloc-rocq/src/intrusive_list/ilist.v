@@ -24,11 +24,11 @@ Section IList.
 
   Definition pop_back := DCycle.remove_1.
       
-  (* TODO(Ben): maybe verify a more efficient removal function *)
+  Definition is_empty_hoare := DCycle.is_empty_spec.
 
-  (* arbitrary removal in the list
-     initially ll = pl (page list head) 
-     lrem = (intrusive) list entry to remove *)
+  Definition prev_hoare := DCycle.prev_spec.
+
+  (* TODO(Ben): maybe verify a more efficient removal function *)
   Definition remove : val := rec: "rec" "ll" "lrem" :=
     if: is_empty "ll" then NONE 
     else

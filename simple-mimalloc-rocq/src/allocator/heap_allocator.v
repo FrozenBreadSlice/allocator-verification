@@ -13,16 +13,21 @@ Module HAlloc. Section HAlloc.
   Implicit Types bs i n : nat.
   Implicit Types Lq Lf : list loc.
 
-  (* constants *)
+  (* index in page for things owned by heap *)
+  Definition f_list : nat := 0.
+  Definition f_in_full : nat := 2.
+  Definition f_heap : nat := 3.
+
+  (* index in heap *)
   Definition f_queue : nat := 0.
   Definition f_full : nat := 2.
-
+  
+  (* other constans *)
   Definition num_f : nat := 2.
   Definition queue_size : nat := 2.
 
   (* TODO(Ben): more queues with block sizes later *)
   Definition BLOCK_SIZE : nat := 16. 
-
   Definition PAGE_ALIGN : nat := 128.  
 
   (* 
@@ -37,14 +42,14 @@ Module HAlloc. Section HAlloc.
 
   Definition heap_free : val := λ: "l", 
     let: "lmd" := ("l" `quot` #PAGE_ALIGN) * #PAGE_ALIGN in
-    if: !("lmd" + #PAlloc.f_in_full) = #true 
+    if: !("lmd" + #f_in_full) 
     then 
-      let: "heap" := !("lmd" + #PAlloc.f_heap) in 
-      match: IList.remove ("heap" + #f_full) ("lmd" + #PAlloc.f_list) with 
+      let: "heap" := !("lmd" + #f_heap) in 
+      match: IList.remove ("heap" + #f_full) ("lmd" + #f_list) with 
         NONE => #() (*does not happen*)
       | SOME "lp" => 
         IList.push_front ("heap" + #f_queue) "lp" ;;
-        ("lp" + #PAlloc.f_in_full) <- #false ;;
+        ("lp" + #f_in_full) <- #false ;;
         PAlloc.page_free "lmd" "l"
       end
     else  
@@ -58,7 +63,7 @@ Module HAlloc. Section HAlloc.
         NONE => 
           let: "lp'" := IList.pop_back "bsq" in 
           IList.push_front "full" "lp'" ;;
-          ("lp'" + #PAlloc.f_in_full) <- #true ;;
+          ("lp'" + #f_in_full) <- #true ;;
           "rec" "bsq" "full" 
       | SOME "l" => SOME "l"
       end.
@@ -108,14 +113,7 @@ Module HAlloc. Section HAlloc.
   *)
 
   (* Internal details :( *)
-  Definition is_valid_loc l al (Lq Lf : list loc) : iProp Σ := 
-    let lmd := down_align l PAGE_ALIGN in 
-    PAlloc.is_valid_loc l lmd ∗ ⌜lmd ∈ (Lq ++ Lf)⌝.
-
-  Global Instance is_valid_loc_persistent l al Lq Lf : 
-    Persistent (is_valid_loc l al Lq Lf).
-  Proof. by apply _. Qed.
-
+  
   Definition is_heap_internal al bs Lq Lf : iProp Σ := 
     ∃ (res : nat), 
       ⌜PAlloc.MDSIZE < bs⌝ ∗
@@ -124,9 +122,9 @@ Module HAlloc. Section HAlloc.
       IList.is_ilist (al + f_queue)%Z Lq ∗ 
       IList.is_ilist (al + f_full)%Z Lf ∗
       ([∗ list] lp ∈ Lq, ∃ bf, 
-          PAlloc.is_page lp bs bf ∗ 
+          PAlloc.is_page lp bs bf (*keep track of block count*) ∗ 
           (lp + PAlloc.f_in_full)%Z ↦ #false ∗
-          (lp + PAlloc.f_heap)%Z ↦ #al ∗
+          (lp + PAlloc.f_heap)%Z ↦ #al ∗ (*free_frac (c) := 1/(c + 1), permissie S free_blocks * free_frac(c)*)
           (lp + PAlloc.f_res)%Z ↦□ #res ∗
           (lp + PAlloc.f_bs)%Z ↦□ #bs ∗
           (lp + PAlloc.f_align)%Z ↦□ #PAGE_ALIGN) ∗
@@ -138,8 +136,20 @@ Module HAlloc. Section HAlloc.
           (lp + PAlloc.f_bs)%Z ↦□ #bs ∗
           (lp + PAlloc.f_align)%Z ↦□ #PAGE_ALIGN).
 
-  Definition is_heap al bs : iProp Σ := 
-    ∃ (Lq Lf : list loc), is_heap_internal al bs Lq Lf.
+  (*TODO(Ben): add block sizes*)
+  Definition free_perm l al : iProp Σ := 
+    ∃ Lq Lf,
+    let lmd := down_align l PAGE_ALIGN in 
+    PAlloc.is_valid_loc l lmd ∗ 
+    (lmd + PAlloc.f_heap)%Z ↦{#free_frac res} #al ∗ 
+    (lmd + PAlloc.f_res)%Z ↦{#free_frac res} #res ∗ 
+
+
+    (*∗ ⌜lmd ∈ (Lq ++ Lf)⌝ ∗ is_heap_internal al BLOCK_SIZE Lq Lf.*)
+
+  Global Instance is_valid_loc_persistent l al : 
+    Persistent (is_valid_loc l al Lq Lf).
+  Proof. by apply _. Qed.
 
   (*
     Hoare triples and proofs
@@ -172,11 +182,10 @@ Module HAlloc. Section HAlloc.
     by iApply "IH".
   Qed.
 
-  Lemma heap_free_weak_hoare l al bs Lq Lf : 
+  Lemma heap_free_weak_hoare l al bs : 
     {{{ 
-      is_heap_internal al bs Lq Lf ∗ 
       ([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v) ∗ 
-      is_valid_loc l al Lq Lf
+      ∃ Lq Lf, is_heap_internal al bs Lq Lf ∗ is_valid_loc l al Lq Lf
     }}}
       heap_free #l 
     {{{ RET #(); is_heap al bs }}}.
@@ -338,9 +347,9 @@ Module HAlloc. Section HAlloc.
     {{{ is_heap al BLOCK_SIZE }}} 
       heap_alloc #al #n
     {{{ vret, RET vret; 
-       (∃ l Lq Lf, ⌜vret = SOMEV #l⌝ ∗ 
+       (∃ l, ⌜vret = SOMEV #l⌝ ∗ 
           ([∗ list] i ∈ seq 0 BLOCK_SIZE, ∃ v, (l + i)%Z ↦ v) ∗ 
-          is_valid_loc l al Lq Lf ∗ is_heap_internal al BLOCK_SIZE Lq Lf)
+           ∃ Lq Lf, is_valid_loc l al Lq Lf ∗ is_heap_internal al BLOCK_SIZE Lq Lf)
         ∨ 
       ⌜vret = NONEV⌝ ∗ is_heap al BLOCK_SIZE 
     }}}.

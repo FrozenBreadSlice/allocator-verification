@@ -36,24 +36,20 @@ Module PAlloc. Section PAlloc.
   Context `{!heapGS_gen hlc Σ}.
 
   Implicit Types al l lbase fl lmd ld lh : loc.
-  Implicit Types n i res cap size bs : nat.
-  Implicit Types in_full full : bool.
+  Implicit Types n i res cap size bs fbs : nat.
+  Implicit Types full : bool.
   Implicit Types v w : val.
 
   (* field offsets *)
-  Definition f_list : nat := 0.
-  Definition f_next : nat := 0.
-  Definition f_prev : nat := 1.
-  Definition f_in_full : nat := 2.
-  Definition f_heap : nat := 3.
+  (* TODO(Ben): maybe reorder fields ... make continues now allign field is weird*)
+  (* TODO(Ben): align field?*)
   Definition f_cap : nat := 4.
   Definition f_res : nat := 5.
   Definition f_bs : nat := 6.
-  Definition f_align : nat := 7.
-  Definition f_free : nat := 8.
-  Definition f_free_local : nat := 9.
+  Definition f_free : nat := 7.
+  Definition f_free_local : nat := 8.
 
-  Definition MDSIZE : nat := 10. 
+  Definition MDSIZE : nat := 9. 
 
   (* 
     function definitions 
@@ -69,26 +65,16 @@ Module PAlloc. Section PAlloc.
     "l" <- !"fl" ;; 
     "fl" <- SOME "l".
 
-
-  (* TODO(Ben): 
-    in c implementaiton 
-    paramaters: the memory, block size, segment index, heap and res/size 
-     (global) 
-    now we allocate our selves which is fine
-  *)
-  Definition page_new_alloc : val := λ: "heap" "res" "bs" "a", 
+  Definition page_new_alloc : val := λ: "res" "bs" "a", 
     let: "al" := AllocN (#MDSIZE + "res" * "bs") "a" NONE in 
-    "al" + #f_heap <- "heap" ;;
-    "al" + #f_in_full <- #false ;;
     "al" + #f_cap <- #0 ;;
     "al" + #f_res <- "res" ;;
     "al" + #f_bs <- "bs" ;;
-    "al" + #f_align <- "a" ;;
     "al" + #f_free <- NONE ;;
     "al" + #f_free_local <- NONE ;;
     "al".
 
-  (* TODO(Ben): should not have al as paramater! *)
+  (* TODO(Ben): should not have al as paramater! ? *)
   Definition page_free : val := λ: "al" "l", 
     freelist_push ("al" + #f_free_local) "l".
 
@@ -127,42 +113,64 @@ Module PAlloc. Section PAlloc.
   (*
     Representation
   *)
+
+  Definition free_frac res := (1 / pos_to_Qp (Pos.succ (Pos.of_nat res)))%Qp.
+  Definition page_frac cbs res := (pos_to_Qp (Pos.of_nat (S cbs)) * free_frac res)%Qp.
+
+  Lemma page_frac_own res : 
+    0 < res ->
+    page_frac res res = 1%Qp.
+  Proof. 
+    intros. rewrite /page_frac /free_frac. 
+    assert (Pos.of_nat (S res) = Pos.succ (Pos.of_nat res)) by lia. 
+    rewrite H0 Qp.mul_div_r. apply eq_refl. 
+  Qed.
+
+  Lemma page_frac_to_free_fac fbs res : 
+    (page_frac (S fbs) res = page_frac fbs res + free_frac res)%Qp.
+  Proof.
+    rewrite /page_frac.
+    replace (Pos.of_nat (S (S fbs))) with 
+    (Pos.of_nat (S fbs) + 1)%positive by lia.
+    rewrite -pos_to_Qp_add Qp.mul_add_distr_r Qp.mul_1_l. apply eq_refl.
+  Qed.
   
+  Definition is_valid_loc_internal l al bs res : iProp Σ := 
+    ∃ ld i, ⌜ld = (al + MDSIZE)%Z⌝ ∗ ⌜l = (ld + (i * bs))%Z⌝ ∗ ⌜i < res⌝.
+    
   Definition is_valid_loc l al : iProp Σ := 
-    ∃ ld res bs i, (al + f_res)%Z ↦□ #res ∗ (al + f_bs)%Z ↦□ #bs ∗ 
-      ⌜ld = (al + MDSIZE)%Z⌝ ∗ ⌜l = (ld + (i * bs))%Z⌝ ∗ ⌜i < res⌝.
-
-  Global Instance is_valid_loc_presist l al : Persistent (is_valid_loc l al).
-  Proof. apply _. Qed.
-
-  Fixpoint is_freelist_rec l al size : iProp Σ := 
-    ∃ bs, (al + f_bs)%Z ↦□  #(S bs) ∗
+    ∃ bs res, 
+      (al + f_bs)%Z ↦{#free_frac res} #bs ∗ 
+      (al + f_res)%Z ↦{#free_frac res} #res ∗ 
+      is_valid_loc_internal l al bs res.
+  
+  Fixpoint is_freelist_rec l al bs res size : iProp Σ := 
     match size with 
-    | O => l ↦ NONEV ∗ ([∗ list] i ∈ seq 1 bs, ∃ v, (l + i)%Z ↦  v) ∗ 
-           is_valid_loc l al
-    | S s => ∃ l1, l ↦ SOMEV #l1 ∗ ([∗ list] i ∈ seq 1 bs, ∃ v, (l + i)%Z ↦  v) ∗
-           is_valid_loc l al ∗ is_freelist_rec l1 al s
+    | O => l ↦ NONEV ∗ ([∗ list] i ∈ seq 1 (bs - 1), ∃ v, (l + i)%Z ↦  v) ∗ 
+           is_valid_loc_internal l al bs res
+    | S s => ∃ l1, l ↦ SOMEV #l1 ∗ ([∗ list] i ∈ seq 1 (bs - 1), ∃ v, (l + i)%Z ↦  v) ∗
+           is_valid_loc_internal l al bs res ∗ is_freelist_rec l1 al bs res s
     end.
     
-  Definition is_freelist fl al empty : iProp Σ := 
+  (* got bs and res because need internal valid loc + bs for block*)
+  Definition is_freelist fl al bs res empty : iProp Σ := 
     match empty with 
     | true => fl ↦ NONEV  
-    | false => ∃ l1 size, fl ↦ SOMEV #l1 ∗ is_freelist_rec l1 al size
+    | false => ∃ l1 size, fl ↦ SOMEV #l1 ∗ is_freelist_rec l1 al bs res size
     end. 
 
-  Definition is_page al bs full : iProp Σ := 
-    ∃ res cap a ld emp1 emp2 , 
-      ⌜(0 < al)%Z⌝ ∗  ⌜0 < res⌝ ∗ ⌜0 < bs⌝ ∗ ⌜0 < a⌝ ∗ ⌜cap ≤ res⌝ ∗
-      ⌜Z.divide a al⌝ ∗ ⌜ld = (al + MDSIZE)%Z⌝ ∗
+  Definition is_page al bs fbs full : iProp Σ := 
+    ∃ res cap ld emp1 emp2 , 
+      ⌜(0 < al)%Z⌝ ∗  ⌜0 < res⌝ ∗ ⌜0 < bs⌝ ∗ ⌜cap ≤ res⌝ ∗ ⌜ld = (al + MDSIZE)%Z⌝ ∗
+      (*⌜fbs ≤ res⌝ ∗ ⌜fbs = emp1 + emp2 + (res - cap)⌝*)
+      ⌜full = true <-> fbs = 0⌝ ∗
       ⌜full = true <-> res = cap ∧ (emp1 = true) ∧ (emp2 = true)⌝ ∗ 
-      (*(al + f_in_full)%Z ↦ #in_full ∗ managed by heap just like intrusive lists*)
-      (*(al + f_heap)%Z ↦□ #lh ∗ heap can manage this makes it more modular *)
+      (*doesn't work*)
       (al + f_cap)%Z ↦ #cap ∗ 
-      (al + f_res)%Z ↦□  #res ∗ 
-      (al + f_bs)%Z ↦□  #bs ∗ 
-      (al + f_align)%Z ↦□ #a ∗
-      is_freelist (al + f_free)%Z al emp1 ∗ 
-      is_freelist (al + f_free_local)%Z al emp2 ∗
+      (al + f_res)%Z ↦{#page_frac fbs res} #res ∗ 
+      (al + f_bs)%Z ↦{#page_frac fbs res} #bs ∗ 
+      is_freelist (al + f_free)%Z al bs res emp1 ∗ 
+      is_freelist (al + f_free_local)%Z al bs res emp2 ∗
       (ld + cap * bs)%Z ↦∗ replicate ((res - cap) * bs) NONEV. 
 
   (*
@@ -171,99 +179,103 @@ Module PAlloc. Section PAlloc.
 
   Lemma page_new_alloc_hoare lh res bs a : 
     {{{ ⌜0 < res⌝ ∗ ⌜0 < bs⌝ ∗ ⌜0 < a⌝ }}} 
-      page_new_alloc #lh #res #bs #a 
+      page_new_alloc #res #bs #a 
     {{{ al, RET #al; 
-        is_page al bs false ∗ 
-        (al + f_next)%Z ↦ NONEV ∗ (al + f_prev)%Z ↦ NONEV ∗ 
-        (al + f_in_full)%Z ↦ #false ∗ (al + f_heap)%Z ↦ #lh ∗
-        (al + f_res)%Z ↦□ #res ∗ 
-        (al + f_bs)%Z ↦□ #bs ∗ 
-        (al + f_align)%Z ↦□ #a
+        is_page al bs res false ∗ al ↦∗ [NONEV; NONEV] ∗ ⌜Z.divide a al⌝
     }}}.
   Proof. 
     iIntros (φ) "(%Hn & %Hbs & %Ha) Hphi". iUnfold page_new_alloc. 
     wp_pures. wp_apply wp_allocN; [lia|lia|done|]. 
     iIntros "%al (Hl & Ha & HalN & _)". 
-    unfold MDSIZE. replace (Z.to_nat (10%nat + res * bs)) 
-    with (S (S (S (S (S (S (S (S (S (S (res * bs))))))))))) by lia. simpl. 
-    rewrite !array_cons. rewrite <- !Z.add_assoc. 
+    replace (Z.to_nat (MDSIZE + res * bs)) 
+    with (S (S (S (S (S (S (S (S (S (res * bs)))))))))) by (unfold MDSIZE; lia). 
+    simpl. rewrite !array_cons. rewrite <- !Z.add_assoc. 
     iDestruct "HalN" as "(Hal & Hal1 & Hal2 & Hal3 & Hal4 & Hal5 & Hal6 & Hal7 & 
-    Hal8 & Hal9 & HalN)". wp_store. wp_store. wp_store. wp_store. wp_store. 
-    wp_store. wp_store. wp_store.
-    iApply "Hphi". rewrite Z.add_0_r. iFrame "Hal Hal1 Ha". 
-    iMod (pointsto_persist with "Hal5") as "#Hal5". 
-    iMod (pointsto_persist with "Hal6") as "#Hal6". 
-    iMod (pointsto_persist with "Hal7") as "#Hal7". 
-    iFrame "Hal3 Hal2 Hal5 Hal6 Hal7 Hl". iExists 0, (al + MDSIZE)%Z, true, true.
-    iFrame. iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|]. 
-    iSplitR; [iPureIntro; lia|]. iSplitR; [done|]. iSplitR; [iPureIntro; lia|]. 
+    Hal8 & HalN)". wp_store. wp_store. wp_store. wp_store. wp_store. 
+    iApply "Hphi". iFrame "Hal Hal1 Ha". rewrite array_nil. iSplitL; [|done]. 
+    iFrame. iExists res, 0, (al + MDSIZE)%Z, true, true.
+    iSplitR; [done|]. iSplitR; [done|]. iSplitR; [iPureIntro; lia|]. 
+    iSplitR; [done|]. iSplitR; [iPureIntro; intuition; [by exfalso|lia]|].
+    iSplitR; [iPureIntro; lia|]. 
+    rewrite page_frac_own; [|done]. iFrame.
     by rewrite /MDSIZE Z.mul_0_l Nat.sub_0_r Z.add_assoc Z.add_0_r.
   Qed.
 
-  Local Lemma freelist_pop_hoare al fl bs b : 
-    {{{ (al + f_bs)%Z ↦□ #bs ∗ is_freelist fl al b }}} 
+  Local Lemma freelist_pop_hoare al fl bs res b : 
+    {{{ is_freelist fl al bs res b }}} 
       freelist_pop #fl
     {{{ vret, RET vret; 
-      (⌜vret = NONEV⌝ ∗ is_freelist fl al true
+      (⌜vret = NONEV⌝ ∗ is_freelist fl al bs res true
         ∨ 
       ∃ l b', ⌜vret = SOMEV #l⌝ ∗ 
         ([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v) ∗ 
-        is_valid_loc l al ∗ is_freelist fl al b')
+        is_valid_loc_internal l al bs res ∗ is_freelist fl al bs res b')
     }}}. 
   Proof.
-    iIntros (φ) "(#Hfbs & Hfl) Hphi". 
+    iIntros (φ) "Hfl Hphi". 
     destruct b; [|iDestruct "Hfl" as "(%l1 & %s & Hfl & Hflr)"]; 
     iUnfold freelist_pop; wp_load; wp_pures.
     { iApply "Hphi". iFrame. by iLeft. } 
     destruct s; simpl.
-    { iDestruct "Hflr" as "(%bs1 & #Hfbs' & Hl1 & Hl1r & #Hl1v)".
-      simplify_eq. wp_load. wp_store. wp_pures. iApply "Hphi". 
-      iCombine "Hfbs Hfbs'" gives %[_ Heq]. 
-      simplify_eq. iRight. iExists l1, true. iFrame. iSplitR; [by iPureIntro|]. 
-      iFrame "Hl1v". iExists NONEV. by rewrite Z.add_0_r. }
-    iDestruct "Hflr" as "(%bs1 & #Hfbs' & %l & Hl1 & Hl1r & #Hl1v & Hflr)". 
-    simplify_eq. wp_load. wp_store. wp_pures. iApply "Hphi". iRight. 
-    iCombine "Hfbs Hfbs'" gives %[_ Heq]. simplify_eq. simpl. 
-    iFrame "Hl1v Hl1r". iExists false. iSplitR; [by iPureIntro|]. 
-    rewrite Z.add_0_r. iSplitL "Hl1"; [auto|]. by iFrame. 
+    { iDestruct "Hflr" as "(Hl1 & Hl1r & Hl1v)".
+      wp_load. wp_store. wp_pures. iApply "Hphi". 
+      iRight. iExists l1, true. iFrame. iSplitR; [by iPureIntro|]. 
+      destruct bs; simpl; [done|].
+      rewrite Nat.sub_0_r Z.add_0_r. by iFrame.  }
+    iDestruct "Hflr" as "(%l & Hl1 & Hl1r & Hl1v & Hflr)". 
+    wp_load. wp_store. wp_pures. iApply "Hphi". iRight. 
+    iFrame. iExists false. iSplitR; [done|]. iFrame.
+    destruct bs; simpl; [done|].
+    rewrite Nat.sub_0_r Z.add_0_r. by iFrame. 
   Qed.
 
-  Local Lemma freelist_push_hoare l fl al b bs : 
+  Local Lemma freelist_push_hoare l fl al b bs res : 
     {{{ 
-      ⌜bs > 0⌝  ∗ (al + f_bs)%Z ↦□ #bs ∗
-      is_freelist fl al b ∗ (([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v)) ∗ 
-      is_valid_loc l al 
+      ⌜bs > 0⌝ ∗ is_freelist fl al bs res b ∗ 
+      (([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v)) ∗ 
+      is_valid_loc_internal l al bs res 
     }}}
       freelist_push #fl #l
-    {{{ RET #(); is_freelist fl al false }}}.
+    {{{ RET #(); is_freelist fl al bs res false }}}.
   Proof. 
-    simpl. iIntros (φ) "(%Hbs & #Hal4 & Hfl & Hun & #Hlv) Hphi".
-    destruct bs; [lia|]. iDestruct "Hun" as "((%v & Hl) & Hl1bs)".
+    simpl. iIntros (φ) "(%Hbs & Hfl & Hun & Hlv) Hphi".
+    destruct bs; [lia|]. iDestruct "Hun" as "((%v & Hl) & Hl1bs)". fold seq.
     destruct b; [|iDestruct "Hfl" as "(%l1 & %s & Hfl & Hflr)"]; 
     iUnfold freelist_push; wp_load; rewrite Z.add_0_r; wp_store; wp_store; 
     iApply "Hphi". 
-    { iFrame. iExists 0. iFrame. iFrame "Hlv Hal4". auto. }
-    iExists l, (S s). iFrame. iFrame "Hlv Hal4". auto.
+    { iFrame. iExists 0. iFrame. by replace (S bs - 1) with bs by lia. }
+    iExists l, (S s). iFrame. by replace (S bs - 1) with bs by lia.
   Qed.
 
-  Lemma page_free_hoare l al bs b : 
+  Lemma inject_litint_nat (n m : nat) : 
+    #n = #m → n = m.
+  Proof. intros. inversion H. by apply Nat2Z.inj. Qed. 
+
+  Lemma page_free_hoare l al bs fbs b : 
     {{{ 
-      is_page al bs b ∗ (([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v)) ∗ 
+      is_page al bs fbs b ∗ 
+      (([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v)) ∗ 
       is_valid_loc l al 
     }}}
       page_free #al #l
-    {{{ RET #(); is_page al bs false }}}.
+    {{{ RET #(); is_page al bs (S fbs) false }}}.
   Proof.
-    iIntros (φ) "((%res & %cap & %a & %ld & %b1 & %b2 & %Hal & %Hr & %Hbs & %Ha 
-    & %Hcr & %Haal & -> & %Hf & Hcap & #Hres & #Hbs & #Ha & Hfl & Hfl2 & Hun) 
-    & Hlbs & #Hlv) Hphi". 
+    iIntros (φ) "((%res & %cap & %ld & %b1 & %b2 & %Hal & %Hr & %Hbs & %Hcr & -> & 
+    %Hf1 & %Hf2 & Hcap & Hres & Hbs & Hfl & Hfl2 & Hun) & Hlbs & Hlv) Hphi". 
     iUnfold page_free. wp_pures. 
-    iApply (freelist_push_hoare with "[Hfl2 Hlbs]"); [iFrame; auto|].
+    iDestruct "Hlv" as "(%bs' & %res' & Hbs' & Hres' & Hlvi)".  
+    iCombine "Hbs'" "Hbs" gives %[_ Heq1']. 
+    iCombine "Hres'" "Hres" gives %[_ Heq2']. 
+    specialize (inject_litint_nat _ _ Heq1') as Heq1. 
+    specialize (inject_litint_nat _ _ Heq2') as Heq2. simplify_eq.
+    iApply (freelist_push_hoare with "[Hfl2 Hlbs Hlvi]"); [iFrame; auto|].
     iNext. iIntros "Hfl2". iApply "Hphi". 
-    iFrame. iFrame "Hres Hbs Ha". iSplitR; [done|]. iSplitR; [done|]. 
-    iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|]. 
-    iSplitR; [done|]. iPureIntro.  
-    intuition; inversion H0.
+    iFrame. iSplitR; [done|]. iSplitR; [done|]. 
+    iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|].
+    iSplitR. { iPureIntro. intuition; lia. }
+    iSplitR. { iPureIntro. intuition; lia. }
+    iCombine "Hres" "Hres'" as "Hres". iCombine "Hbs" "Hbs'" as "Hbs". 
+    rewrite -page_frac_to_free_fac. by iFrame.
   Qed.
 
   Local Lemma seq_array_pointsto_eq l dq v n :
@@ -278,28 +290,27 @@ Module PAlloc. Section PAlloc.
   Qed.
 
   Local Lemma freelist_extend_hoare fl al ld res bs b lb cap n c d : 
-    d = n - c -> 
-    ld = (al + MDSIZE)%Z -> 
-    lb = (ld + (cap * bs))%Z ->
-    cap ≤ res ->
-    n ≤ res - cap ->
-    bs > 0 ->
+    d = n - c →
+    ld = (al + MDSIZE)%Z →
+    lb = (ld + (cap * bs))%Z → 
+    cap ≤ res →
+    n ≤ res - cap → 
+    bs > 0 →
     {{{ 
-      (al + f_res)%Z ↦□ #res ∗ (al + f_bs)%Z ↦□ #bs ∗
-      is_freelist fl al b ∗ (lb + (c * bs))%Z ↦∗ replicate (d * bs) NONEV 
+      is_freelist fl al bs res b ∗ (lb + (c * bs))%Z ↦∗ replicate (d * bs) NONEV 
     }}} 
       freelist_extend #fl #lb #bs #n #c
-    {{{ RET #(); is_freelist fl al (b && (d =? 0)) }}}. 
+    {{{ RET #(); is_freelist fl al bs res (b && (d =? 0)) }}}. 
   Proof. 
     iInduction d as [|d IH] forall (b c); simpl; 
-    iIntros (Hd -> -> Hcr Hd2 Hbs φ) "(#Hres & #Hbs & Hfl & Hun) Hphi";
+    iIntros (Hd -> -> Hcr Hd2 Hbs φ) "(Hfl & Hun) Hphi";
     iUnfold freelist_extend; wp_pures. 
     { case_bool_decide; [lia|]. wp_pures. iApply "Hphi". by rewrite andb_true_r. }
     case_bool_decide; [|lia]. wp_pures. 
     rewrite replicate_add array_app length_replicate. 
     iDestruct "Hun" as "(Hun1 & Hun2)". 
     wp_apply (freelist_push_hoare with "[Hfl Hun1]").
-    { iFrame "Hfl Hres Hbs". iSplitR; [done|]. iSplitL "Hun1". 
+    { iFrame. iSplitR; [done|]. iSplitL "Hun1". 
       - iApply big_sepL_mono; 
         [|iApply seq_array_pointsto_eq; iApply "Hun1"]. iIntros. auto.
       - iExists (al + MDSIZE)%Z, (cap + c). iPureIntro. split; 
@@ -308,43 +319,43 @@ Module PAlloc. Section PAlloc.
     assert (Heq : (Z.of_nat c + 1)%Z = Z.of_nat (c + 1)) by lia. rewrite Heq. 
     iApply ("IH" with "[] [] [] [] [] [] [Hfl Hun2]"); try iPureIntro;
     [lia|done|done|done|lia|done| |].
-    { iFrame "Hres Hbs Hfl". rewrite <-Z.add_assoc. 
+    { iFrame. rewrite <-Z.add_assoc. 
       by rewrite Nat2Z.inj_add Z.mul_add_distr_r Z.mul_1_l !Z.add_assoc. }
     iNext. iIntros. iApply "Hphi". by rewrite andb_false_l andb_false_r.
   Qed. 
 
-  Local Lemma page_extend_hoare al ld res cap bs a : 
-    (0 < al)%Z ->
-    0 < res-> 
-    0 < bs -> 
-    0 < a -> 
-    cap ≤ res -> 
-    Z.divide a al ->
-    ld = (al + MDSIZE)%Z ->
+  Local Lemma page_extend_hoare al ld res cap bs fbs : 
+    (0 < al)%Z →
+    0 < res →
+    0 < bs →
+    cap ≤ res →
+    ld = (al + MDSIZE)%Z →
+    fbs = 0 <-> res = cap → 
     {{{ 
-      (al + f_cap)%Z ↦ #cap ∗ (al + f_res)%Z ↦□  #res ∗ 
-      (al + f_bs)%Z ↦□  #bs ∗ (al + f_align)%Z ↦□  #a ∗ 
-      is_freelist (al + f_free)%Z al true ∗ 
-      is_freelist (al + f_free_local)%Z al true ∗
+      (al + f_cap)%Z ↦ #cap ∗ 
+      (al + f_res)%Z ↦{#page_frac fbs res} #res ∗ 
+      (al + f_bs)%Z ↦{#page_frac fbs res} #bs ∗ 
+      is_freelist (al + f_free)%Z al bs res true ∗ 
+      is_freelist (al + f_free_local)%Z al bs res true ∗
       (ld + cap * bs)%Z ↦∗ replicate ((res - cap) * bs) NONEV 
     }}} 
       page_extend #al #ld 
     {{{ vret, RET vret; 
       ((∃ l, ⌜vret = SOMEV #l⌝ ∗ (([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v)) ∗ 
-        is_valid_loc l al ∗ is_page al bs (res - cap =? 1))  
+      is_valid_loc l al ∗ is_page al bs (fbs - 1) (res - cap =? 1)) 
         ∨  
-      ⌜vret = NONEV⌝ ∗ is_page al bs true) 
+      ⌜vret = NONEV⌝ ∗ is_page al bs 0 true) 
     }}}.
   Proof. 
-    iIntros (Hal Hr Hbs Ha Hcr Haal Hld φ) "(Hcap & #Hres & #Hbs & #Ha & Hfl & 
-    Hfl2 & Hun) Hphi". 
-    iUnfold page_extend. wp_pures. wp_load. wp_load. wp_load. 
+    iIntros (Hal Hr Hbs Hcr Hld Hfbs φ) "(Hcap & Hres & Hbs & Hfl & Hfl2 & Hun) 
+    Hphi". iUnfold page_extend. wp_pures. wp_load. wp_load. wp_load. 
     wp_pures. destruct (decide (cap = 0)) as [Hc | Hc]. 
-    { rewrite Hc. wp_pures. case_bool_decide; [|lia]. wp_pures. 
+    { rewrite Hc. wp_pures. case_bool_decide; [|lia].
+      assert (fbs > 0) by lia. destruct fbs; [lia|]. wp_pures. 
       rewrite Z.mul_0_l Z.add_0_r.
       wp_apply ((freelist_extend_hoare (al + f_free)%Z al ld res bs 
       true ld 0 0 0 0) with "[Hfl]"); try lia;
-      [rewrite array_nil; iFrame "Hres Hbs Hfl"|]. 
+      [rewrite array_nil; iFrame|]. 
       rewrite Nat.sub_0_r. destruct res; [lia|]. simpl. 
       rewrite replicate_add array_app. iDestruct "Hun" as "(Hun1 & Hun2)". 
       iIntros "Hfl". wp_store. wp_pures. iApply "Hphi". iLeft.
@@ -352,15 +363,20 @@ Module PAlloc. Section PAlloc.
       iExists ld. iSplitR; [done|]. iSplitL "Hun1".
       { iApply big_sepL_mono; [|by iApply seq_array_pointsto_eq]. 
         iIntros. auto. }
-      iSplitR. 
-      { iFrame "Hres Hbs". iExists ld, 0. rewrite Z.mul_0_l Z.add_0_r. 
+      rewrite page_frac_to_free_fac.
+      iDestruct "Hres" as "(Hresp & Hres1)".
+      iDestruct "Hbs" as "(Hbsp & Hbs1)".
+      iSplitL "Hres1 Hbs1". 
+      { iFrame. iExists ld, 0. rewrite Z.mul_0_l Z.add_0_r. 
         iPureIntro. split; [done|]. split; [done|lia]. }
-      iFrame. iFrame "Hres Hbs Ha". iExists 1, ld, true, true. 
+      rewrite Nat.sub_0_r. iFrame. iExists 1, ld, true, true. 
       rewrite Z.mul_1_l. replace (Z.of_nat 1) with (1%Z) by lia. 
-      replace (S res - 1) with (res) by lia. iFrame "Hcap Hfl Hfl2 Hun2". 
+      replace (S res - 1) with (res) by lia. iFrame. 
       iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|]. 
-      iSplitR; [iPureIntro; lia|]. iSplitR; [done|]. iSplitR; [done|].
-      rewrite Nat.eqb_eq. iPureIntro. intuition. }
+      iSplitR; [iPureIntro; lia|]. rewrite Nat.eqb_eq. 
+      iSplitR; iPureIntro.
+      + intuition. * admit. * admit.
+      + intuition. }
     case_bool_decide; [inv H; lia|]. wp_pures. case_bool_decide.
     { wp_pures. case_bool_decide; [inv H1; lia|]. wp_pures. 
       assert (Z.of_nat (cap - 1) = (Z.of_nat cap - 1)%Z) by lia. rewrite -H2.
@@ -370,7 +386,7 @@ Module PAlloc. Section PAlloc.
       iDestruct "Hun" as "(Hun1 & Hun2)". rewrite length_replicate.
       wp_apply (freelist_extend_hoare (al + f_free)%Z al ld res bs true 
       (ld + (cap * bs))%Z cap (cap - 1) 0 (cap - 1) with "[Hfl Hun1]"); try lia.
-      { iFrame "Hres Hfl Hbs". by rewrite Z.mul_0_l Z.add_0_r. }
+      { iFrame. by rewrite Z.mul_0_l Z.add_0_r. }
       iIntros "Hfl". rewrite andb_true_l. wp_store. wp_pures. iApply "Hphi".  
       (*split: bs of *)
       replace (res - cap - (cap - 1)) with (1 + (res - cap - cap)) by lia. 
@@ -384,24 +400,26 @@ Module PAlloc. Section PAlloc.
         iIntros. iExists NONEV. unfold MDSIZE.
         by replace (ld + (cap * bs + ((cap - 1) * bs)%nat))%Z 
         with (ld + (cap + cap - 1) * bs)%Z by lia. }
-      iSplitR. 
-      { iFrame "Hres Hbs". iExists ld, (cap + cap - 1). 
+      assert (fbs > 0) by lia. destruct fbs; [lia|].
+      rewrite page_frac_to_free_fac. 
+      iDestruct "Hres" as "(Hresp & Hres1)".
+      iDestruct "Hbs" as "(Hbsp & Hbs1)".
+      iSplitL "Hres1 Hbs1". 
+      { iFrame. iExists ld, (cap + cap - 1). 
         rewrite -Nat2Z.inj_add. iSplitR; [done|iPureIntro; lia]. }
-      rewrite -Nat2Z.inj_add. iFrame "Hfl2 Hres Hbs Ha Hfl Hcap".
+      rewrite -Nat2Z.inj_add. replace (S fbs - 1) with fbs by lia. iFrame. 
       iExists ld. iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|]. 
-      iSplitR; [done|]. iSplitR; [iPureIntro; lia|]. iSplitR; [done|]. 
-      iSplitR; [done|].
+      iSplitR; [iPureIntro; lia|]. iSplitR; [done|].
       iSplitR; [iPureIntro; rewrite !Nat.eqb_eq; lia|]. 
       assert ((ld + cap * bs + (((cap - 1) * bs)%nat + bs))%Z 
       = (ld + (cap + cap)%nat * bs)%Z) by lia.
       assert ((res - cap - cap) * bs = (res - (cap + cap)) * bs) by lia.
-      by rewrite -H4 H5 Z.add_assoc.  }
+      by rewrite -H5 H6 Z.add_assoc.  }
     wp_pures. destruct (decide (res - cap = 0)) as [Hcr2 | Hcr2]. 
     { rewrite -Nat2Z.inj_sub; [|done]. rewrite Hcr2. wp_pures. 
-      iApply "Hphi". iRight. iSplitR; [done|]. 
-      iFrame "Hres Hbs Hcap Ha Hfl2 Hfl". iExists ld. iSplitR; [done|].
+      iApply "Hphi". iRight. iSplitR; [done|]. iFrame. 
+      replace fbs with 0 by lia. iFrame. iExists ld. iSplitR; [done|].
       iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|].
-      iSplitR; [done|]. iSplitR; [done|].
       iSplitR; [|by rewrite Hcr2]. iPureIntro. intuition. lia. }
     case_bool_decide; [inv H1; lia|]. wp_pures.
     (* split (res - cap - 1) * bs + bs  *)
@@ -416,46 +434,52 @@ Module PAlloc. Section PAlloc.
     (*
     assert (Z.of_nat (res - cap - 1) = (Z.of_nat res - Z.of_nat cap - 1)%Z) 
     by lia. rewrite H3. wp_apply ("H" with "[Hfl Hun1]"). *)
-    { rewrite -Z.add_assoc Z.mul_0_l Z.add_0_r. iFrame "Hres Hbs Hun1 Hfl". }
+    { rewrite -Z.add_assoc Z.mul_0_l Z.add_0_r. iFrame. }
     iIntros "Hfl". wp_store. wp_pures. iApply "Hphi". iLeft.
     assert ((ld + cap * bs + ((res - cap - 1) * bs)%nat)%Z 
     = (ld + (cap + (res - cap) - 1) * bs)%Z) by lia. rewrite H3. 
     iExists _. iSplitR; [done|]. iSplitL "Hun2".
     { iApply big_sepL_mono; [|by iApply seq_array_pointsto_eq]. iIntros. auto. }
-    iSplitR.
-    { iFrame "Hres Hbs". iExists _, (cap + (res - cap) - 1). iSplitR; [done|]. 
+    assert (fbs > 0) by lia. destruct fbs; [lia|].
+    rewrite page_frac_to_free_fac. 
+    iDestruct "Hres" as "(Hresp & Hres1)".
+    iDestruct "Hbs" as "(Hbsp & Hbs1)".
+    iSplitL "Hres1 Hbs1". 
+    { iFrame. iExists _, (cap + (res - cap) - 1). iSplitR; [done|]. 
       iPureIntro. lia. }
     rewrite -Nat2Z.inj_sub; [|lia]. rewrite -Nat2Z.inj_add. 
-    iFrame "Hres Hbs Ha Hcap Hfl2 Hfl". iExists _. iSplitR; [done|].
-    iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|]. 
-    iSplitR; [iPureIntro; lia|]. iSplitR; [done|]. iSplitR; [done|].
-    iSplitR.
+    replace (S fbs - 1) with fbs by lia.
+    iFrame. iExists _. iSplitR; [done|].
+    iSplitR; [done|]. iSplitR; [done|]. iSplitR; [iPureIntro; lia|]. 
+    iSplitR; [done|]. iSplitR.
     { iPureIntro. rewrite -H2 !Nat.eqb_eq. intuition; try lia. }
     replace (res - (cap + (res - cap))) with 0 by lia. 
     rewrite Nat.mul_0_l. simpl. by rewrite array_nil.
   Qed.
 
-  Lemma page_alloc_hoare al bs b :
-    {{{ is_page al bs b }}}
+  Lemma page_alloc_hoare al bs fbs b :
+    {{{ is_page al bs fbs b }}}
       page_alloc #al
     {{{ vret, RET vret; 
       (∃ l b', ⌜vret = SOMEV #l⌝ ∗ 
           ([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v) ∗ 
-          is_valid_loc l al ∗ is_page al bs b')
+          is_valid_loc l al ∗ is_page al bs (fbs - 1) b')
         ∨ 
-      ⌜vret = NONEV⌝ ∗ is_page al bs true
+      ⌜vret = NONEV⌝ ∗ is_page al bs 0 true
     }}}.
   Proof.
-    iIntros (φ) "(%res & %cap & %a & %ld & %b1 & %b2 & %Hal & %Hr & %Hbs & %Ha 
-    & %Hcr & %Haal & -> & %Hf & Hcap & #Hres & #Hbs & #Ha & Hfl & Hfl2 & Hun) 
-    Hphi". iUnfold page_alloc. wp_pures. 
-    wp_apply (freelist_pop_hoare with "[Hfl]"); [by iFrame "Hfl Hbs"|].
+    iIntros (φ) "(%res & %cap & %ld & %b1 & %b2 & %Hal & %Hr & %Hbs & %Hcr & -> & 
+    %Hf & Hcap & Hres & Hbs & Hfl & Hfl2 & Hun) Hphi". 
+    iUnfold page_alloc. wp_pures. 
+    wp_apply (freelist_pop_hoare with "[Hfl]"); [by iFrame|].
     iIntros (v) "[(-> & Hfl) | (%l & %b' & -> & Hlbs & #Hlv & Hfl)]"; wp_pures.
-    { wp_apply (freelist_pop_hoare with "[Hfl2]"); [by iFrame "Hfl2 Hbs"|].
+    { wp_apply (freelist_pop_hoare with "[Hfl2]"); [by iFrame|].
       iIntros (v) "[(-> & Hfl2) | (%l & %b'' & -> & Hlbs & #Hlv & Hfl2)]"; 
       wp_pures.
-      - wp_apply ((page_extend_hoare al (al + MDSIZE)%Z res cap bs a) 
-        with "[Hun Hcap Hfl Hfl2]"); try (done || lia);
+      - wp_apply ((page_extend_hoare al (al + MDSIZE)%Z res cap bs fbs) 
+        with "[Hun Hcap Hfl Hfl2]"); try (done || lia). 
+        +
+        ;
         [iFrame; iFrame "Hres Hbs Ha"|].
         iIntros (v) "[(%l & -> & Hlbs & #Hvl & Hal) | (-> & Hal)]".
         + iApply "Hphi". iLeft. by iFrame "Hlbs Hal Hvl". 

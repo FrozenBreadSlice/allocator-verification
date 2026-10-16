@@ -1,6 +1,7 @@
 From AllSrc.iris_heap_lang_asm Require Import lang proofmode notation.
 From AllSrc.allocator Require Import page_allocator.
 From AllSrc.intrusive_list Require Import ilist.
+From AllSrc.allocator Require Import utils.
 
 (* Heap allocator
 
@@ -10,7 +11,7 @@ Module HAlloc. Section HAlloc.
   Context `{!heapGS_gen hlc Σ}.
  
   Implicit Types al l lq lf : loc.
-  Implicit Types bs i n : nat.
+  Implicit Types res bs fbs i n : nat.
   Implicit Types Lq Lf : list loc.
 
   (* index in page for things owned by heap *)
@@ -46,7 +47,7 @@ Module HAlloc. Section HAlloc.
     then 
       let: "heap" := !("lmd" + #f_heap) in 
       match: IList.remove ("heap" + #f_full) ("lmd" + #f_list) with 
-        NONE => #() (*does not happen*)
+        NONE => #() (*should not happen*)
       | SOME "lp" => 
         IList.push_front ("heap" + #f_queue) "lp" ;;
         ("lp" + #f_in_full) <- #false ;;
@@ -83,82 +84,63 @@ Module HAlloc. Section HAlloc.
       | SOME "l" => SOME "l"
       end.
 
-  (* TODO(Ben): put somewhere else later *)
-
-  Definition down_align (l : loc) (a : Z) : loc := (l `quot` a * a)%Z.
-
-  Lemma down_align_in_range l l' a : 
-    (0 < l)%Z ->
-    (0 < a)%Z -> 
-    Z.divide a l -> 
-    (l ≤ l' < l + a)%Z -> 
-    down_align l' a = l.
-  Proof.
-    intros. unfold down_align. 
-    assert (l = (l `quot` a * a))%Z as Heql.
-    { destruct H1 as [x Heql]. rewrite Heql Z.quot_mul; lia. }
-    remember (l `quot` a)%Z as x.
-    assert (l' = a * l' `quot` a + l' `rem` a)%Z as Heql'; 
-    [apply Z.quot_rem'|].
-    remember (l' `quot` a)%Z as y.
-    remember (l' `rem` a)%Z as r.
-    rewrite Heql. rewrite Z.mul_cancel_r; [|lia].
-    assert (0 ≤ r < a)%Z as Hr.
-    { rewrite Heqr. apply Z.rem_bound_pos_pos; lia. }
-    rewrite Heql in H2. rewrite Heql' in H2. nia.
-  Qed.
- 
   (* 
     Representation
   *)
 
-  (* Internal details :( *)
-  
-  Definition is_heap_internal al bs Lq Lf : iProp Σ := 
-    ∃ (res : nat), 
-      ⌜PAlloc.MDSIZE < bs⌝ ∗
-      ⌜res = Z.to_nat (PAGE_ALIGN `quot` bs - 1)%Z⌝ ∗
-      (*⌜(res * bs + PAlloc.MDSIZE < PAGE_ALIGN)%Z⌝ ∗*)
+  Definition is_heap_internal al Lq Lf : iProp Σ :=
+    ∃ res, 
+      ⌜PAlloc.MDSIZE < BLOCK_SIZE⌝ ∗
+      ⌜res = Z.to_nat (PAGE_ALIGN `quot` BLOCK_SIZE - 1)%Z⌝ ∗
+      ⌜(res * BLOCK_SIZE + PAlloc.MDSIZE < PAGE_ALIGN)%Z⌝ ∗
       IList.is_ilist (al + f_queue)%Z Lq ∗ 
       IList.is_ilist (al + f_full)%Z Lf ∗
-      ([∗ list] lp ∈ Lq, ∃ bf, 
-          PAlloc.is_page lp bs bf (*keep track of block count*) ∗ 
-          (lp + PAlloc.f_in_full)%Z ↦ #false ∗
-          (lp + PAlloc.f_heap)%Z ↦ #al ∗ (*free_frac (c) := 1/(c + 1), permissie S free_blocks * free_frac(c)*)
-          (lp + PAlloc.f_res)%Z ↦□ #res ∗
-          (lp + PAlloc.f_bs)%Z ↦□ #bs ∗
-          (lp + PAlloc.f_align)%Z ↦□ #PAGE_ALIGN) ∗
+      ([∗ list] lp ∈ Lq,  
+          ∃ fbs,
+          ⌜(PAGE_ALIGN | lp)%Z⌝ ∗
+          PAlloc.is_page lp BLOCK_SIZE res fbs ∗ 
+          (lp + f_in_full)%Z ↦ #false ∗
+          (lp + f_heap)%Z ↦{#page_frac res fbs} #al) ∗
       ([∗ list] lp ∈ Lf, 
-          PAlloc.is_page lp bs true ∗ 
-          (lp + PAlloc.f_in_full)%Z ↦ #true ∗
-          (lp + PAlloc.f_heap)%Z ↦ #al ∗
-          (lp + PAlloc.f_res)%Z ↦□ #res ∗
-          (lp + PAlloc.f_bs)%Z ↦□ #bs ∗
-          (lp + PAlloc.f_align)%Z ↦□ #PAGE_ALIGN).
+          ∃ fbs,
+          ⌜(PAGE_ALIGN | lp)%Z⌝ ∗
+          PAlloc.is_page lp BLOCK_SIZE res fbs ∗ 
+          (lp + f_in_full)%Z ↦ #true ∗
+          (lp + f_heap)%Z ↦{#page_frac res fbs} #al).
 
-  (*TODO(Ben): add block sizes*)
-  Definition free_perm l al : iProp Σ := 
-    ∃ Lq Lf,
+  Definition is_heap al : iProp Σ := 
+    ∃ Lq Lf, is_heap_internal al Lq Lf.
+
+  Definition is_valid_loc l al : iProp Σ := 
+    ∃ bs res,
     let lmd := down_align l PAGE_ALIGN in 
-    PAlloc.is_valid_loc l lmd ∗ 
-    (lmd + PAlloc.f_heap)%Z ↦{#free_frac res} #al ∗ 
-    (lmd + PAlloc.f_res)%Z ↦{#free_frac res} #res ∗ 
-
-
-    (*∗ ⌜lmd ∈ (Lq ++ Lf)⌝ ∗ is_heap_internal al BLOCK_SIZE Lq Lf.*)
-
-  Global Instance is_valid_loc_persistent l al : 
-    Persistent (is_valid_loc l al Lq Lf).
-  Proof. by apply _. Qed.
+    (lmd + PAlloc.f_bs)%Z ↦{#free_frac res} #bs ∗
+    (lmd + PAlloc.f_res)%Z ↦{#free_frac res} #res ∗
+    PAlloc.is_valid_loc_internal l lmd bs res ∗ 
+    (lmd + f_heap)%Z ↦{#free_frac res} #al.
 
   (*
     Hoare triples and proofs
   *)
+  Lemma in_internal_lists al l Lq Lf : 
+    is_heap_internal al Lq Lf ∗ is_valid_loc l al 
+    ⊢ (*is_heap_internal al Lq Lf ∗ is_valid_loc l al 
+    ∗*) ⌜down_align l PAGE_ALIGN ∈ (Lq ++ Lf)⌝.
+  Proof. Admitted.
+    (*
+    iIntros "(Hh & Hvl)".
+    iDestruct "Hh" as "(%res & %Hr1 & %Hr2 & %Hr3 & Hil1 & Hil2 & Hp1 & 
+    Hp2)".
+    iDestruct "Hvl" as "(%bs' & %res' & Hbs' & Hres' & Hvli & Hal)".
+    destruct 
+  Qed.
+*)
+ 
 
   Lemma heap_new_alloc_hoare :
     {{{ emp }}}
       heap_new_alloc #() 
-    {{{ al, RET #al; is_heap al BLOCK_SIZE }}}.
+    {{{ al, RET #al; is_heap al }}}.
   Proof. 
     iIntros (φ) "_ Hphi". iUnfold heap_new_alloc. wp_pures.
     wp_apply wp_allocN; [done|done|done|]. iIntros (l) "(_ & _ & [Hl _])".
@@ -182,19 +164,46 @@ Module HAlloc. Section HAlloc.
     by iApply "IH".
   Qed.
 
-  Lemma heap_free_weak_hoare l al bs : 
+  Lemma heap_free_hoare l al : 
     {{{ 
-      ([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v) ∗ 
-      ∃ Lq Lf, is_heap_internal al bs Lq Lf ∗ is_valid_loc l al Lq Lf
+      is_heap al ∗ ([∗ list] i ∈ seq 0 BLOCK_SIZE, ∃ v, (l + i)%Z ↦ v) ∗ 
+      is_valid_loc l al
     }}}
       heap_free #l 
-    {{{ RET #(); is_heap al bs }}}.
+    {{{ RET #(); is_heap al }}}.
   Proof. 
-    iIntros (φ) "((%res & %HB & %HR & Hil1 & Hil2 & Hp1 & Hp2) & 
-    Hl & #(Hlvl & %HinL)) Hphi". iUnfold heap_free. wp_pures.
-    remember (down_align l PAGE_ALIGN) as lmd.
+    iIntros (φ) "((%Lq & %Lf & %res & %Hr1 & %Hr2 & %Hr3 & Hil1 & 
+    Hil2 & Hp1 & Hp2) & Hun & Hvl) Hphi". iUnfold heap_free. wp_pures.
+    unfold is_valid_loc. remember (down_align l PAGE_ALIGN) as lmd.
     assert (l `quot` PAGE_ALIGN * PAGE_ALIGN = lmd)%Z by done. 
-    rewrite H. apply elem_of_app in HinL. destruct HinL.
+    rewrite H. 
+    iDestruct "Hvl" as "(%bs' & %res' & Hbs' & Hres' & Hvli & Hal & H)"
+    (*how do we establish lmd from in is_valid_loc l al 
+    is in one of the lists?
+    - we know from things in the list that 
+       is_page lp BLOCK_SIZE res fbs and 
+       thtat lp is at PAGE_ALIGN boundary 
+   
+    Definition is_valid_loc l al : iProp Σ := 
+      ∃ res,
+      let lmd := down_align l PAGE_ALIGN in 
+      PAlloc.is_valid_loc l lmd ∗ 
+      (lmd + PAlloc.f_res)%Z ↦{#free_frac res} #res ∗
+      (lmd + f_heap)%Z ↦{#free_frac res} #al.
+ 
+    Definition is_valid_loc_internal l al bs res : iProp Σ := 
+      ∃ ld i, ⌜ld = (al + MDSIZE)%Z⌝ ∗ ⌜l = (ld + (i * bs))%Z⌝ ∗ ⌜i < res⌝.
+    
+    Definition is_valid_loc l al : iProp Σ := 
+      ∃ bs res, 
+        (al + f_bs)%Z ↦{#free_frac res} #bs ∗ 
+        (al + f_res)%Z ↦{#free_frac res} #res ∗ 
+        is_valid_loc_internal l al bs res.
+
+    *)
+
+    (* old 
+    About elem_of_app. apply elem_of_app in HinL. destruct HinL.
     - iPoseProof (big_sepL_elem_of_acc _ Lq lmd $ H0 with "Hp1") as "H".
       iDestruct "H" as "((%bf & Hp & Hpif & Hph) & Hrp1)".
       iDestruct "Hp" as "(%res' & %cap & %a & %ld & %b1 & %b2 & %Hal & %Hr & %Hbs 
@@ -217,54 +226,18 @@ Module HAlloc. Section HAlloc.
       wp_apply (PAlloc.page_free_hoare with "[Hlmdp Hl]"); [by iFrame|].
       iIntros "Hlmdp". iApply "Hphi". iExists (lmd::Lq), (L1 ++ L2). 
       iFrame. iSplitR; [done|]. iSplitR; [done|]. by rewrite Z.add_0_r. 
+    *)
   Qed.
 
-  (* what to do with is_valid_loc??
-  Lemma heap_free_hoare l al bs : 
-    {{{ 
-      is_heap al bs ∗ ([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v)
-      ∗ is_valid_loc l al 
-    }}}
-      heap_free #l
-    {{{ RET #(); is_heap al bs }}}.
-  Proof. Admitted.
-  *)
-
-  Local Lemma get_page_alignment_facts al bs b : 
-    PAlloc.is_page al bs b ⊢ 
-      ∃ a, ⌜(0 < al)%Z⌝ ∗ ⌜0 < a⌝ ∗ ⌜Z.divide a al⌝ ∗ 
-      (al + PAlloc.f_align)%Z ↦□ #a ∗ PAlloc.is_page al bs b. 
-  Proof.
-    iIntros "(%res & %cap & %a & %ld & %b1 & %b2 & %Hal & %Hr & %Hbs & %Ha 
-    & %Hcr & %Haal & -> & %Hf & Hcap & #Hres & #Hbs & #Ha & Hfl & Hfl2 & Hun)". 
-    iExists a. iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|].
-    iFrame "Ha Hres Hbs". iFrame. auto. 
-  Qed.
- 
-  Local Lemma quot_helper x y : 
-    (0 < x)%Z -> 
-    (0 < y)%Z -> 
-    (x `quot` y * y ≤ x)%Z.
-  Proof.
-    intros. 
-    assert (x = y * x `quot` y + x `rem` y)%Z as Heqx; 
-    [apply Z.quot_rem'|].
-    remember (x `quot` y)%Z as z.
-    remember (x `rem` y)%Z as r.
-    rewrite Heqx. 
-    assert (0 ≤ r)%Z as Hr.
-    { rewrite Heqr. apply Z.rem_bound_pos_pos; lia. }
-    lia.
-  Qed.
-
-  Local Lemma down_align_location l l' i bs : 
-    (PAlloc.MDSIZE < bs)%Z ->
+  Local Lemma down_align_location l l' i : 
+    (PAlloc.MDSIZE < BLOCK_SIZE)%Z ->
     (0 < l')%Z ->
     (PAGE_ALIGN | l')%Z ->
-    i < Z.to_nat (PAGE_ALIGN `quot` bs - 1) -> 
-    l = (l' + PAlloc.MDSIZE + i * bs)%Z -> 
+    i < Z.to_nat (PAGE_ALIGN `quot` BLOCK_SIZE - 1) -> 
+    l = (l' + PAlloc.MDSIZE + i * BLOCK_SIZE)%Z -> 
     down_align l PAGE_ALIGN = l'.
-  Proof.
+  Proof. Admitted.
+  (*
     intros Hbs Hl Hla Hi Heql.
     apply down_align_in_range; try done. rewrite Heql.  
     assert (PAlloc.MDSIZE + i * bs > 0); [simpl; lia|].
@@ -272,19 +245,22 @@ Module HAlloc. Section HAlloc.
     assert (PAGE_ALIGN `quot` bs * bs ≤ PAGE_ALIGN)%Z; [|nia].
     apply quot_helper; unfold PAGE_ALIGN; lia.
   Qed.
-  
-  Local Lemma queue_alloc_hoare al bs Lq Lf : 
-    {{{ is_heap_internal al bs Lq Lf }}} 
+   *)
+
+  Local Lemma queue_alloc_hoare al Lq Lf : 
+    {{{ is_heap_internal al Lq Lf }}} 
       queue_alloc #(al + f_queue) #(al + f_full) 
     {{{ vret, RET vret; 
       (∃ Lq' L Lf' l, ⌜vret = SOMEV #l⌝ ∗ 
         ⌜Lq = Lq' ++ L⌝ ∗ ⌜Lf' = L ++ Lf⌝ ∗
-        ([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v) ∗ 
-        is_valid_loc l al Lq' Lf' ∗
-        is_heap_internal al bs Lq' Lf') 
+        ([∗ list] i ∈ seq 0 BLOCK_SIZE, ∃ v, (l + i)%Z ↦ v) ∗ 
+        is_valid_loc l al ∗
+        is_heap_internal al Lq' Lf') 
       ∨
-      (⌜vret = NONEV⌝ ∗ is_heap_internal al bs [] (Lq ++ Lf))
+      (⌜vret = NONEV⌝ ∗ is_heap_internal al [] (Lq ++ Lf))
     }}}.
+  Proof. Admitted.
+  (*
   Proof. 
     revert Lf. induction Lq using rev_ind; iIntros (Lf).
     { iIntros (φ) "(%res & %HB & %HR & Hil1 & Hil2 & Hp1 & Hp2) Hphi". 
@@ -342,17 +318,20 @@ Module HAlloc. Section HAlloc.
         by simpl. }
       iApply "Hphi". iRight. by rewrite -app_assoc /=.
   Qed.
+  *)
   
-  Lemma heap_alloc_weak_hoare al n : 
-    {{{ is_heap al BLOCK_SIZE }}} 
+  Lemma heap_alloc_hoare al n : 
+    {{{ is_heap al }}} 
       heap_alloc #al #n
     {{{ vret, RET vret; 
        (∃ l, ⌜vret = SOMEV #l⌝ ∗ 
           ([∗ list] i ∈ seq 0 BLOCK_SIZE, ∃ v, (l + i)%Z ↦ v) ∗ 
-           ∃ Lq Lf, is_valid_loc l al Lq Lf ∗ is_heap_internal al BLOCK_SIZE Lq Lf)
+          is_valid_loc l al ∗ is_heap al)
         ∨ 
-      ⌜vret = NONEV⌝ ∗ is_heap al BLOCK_SIZE 
+      ⌜vret = NONEV⌝ ∗ is_heap al 
     }}}.
+  Proof. Admitted.
+  (*
   Proof. 
     iIntros (φ) "(%Lq & %Lf & %res & %HB & %HR & Hil1 & Hil2 & Hp1 & Hp2) Hphi".  
     iUnfold heap_alloc. wp_pures. case_bool_decide.
@@ -401,19 +380,73 @@ Module HAlloc. Section HAlloc.
       iUnfold is_heap. iExists [lp], (Lq ++ Lf). simplify_eq. 
       iFrame. iFrame "Hres Hbs Ha". auto.
   Qed.
-
-  (*
-  Lemma heap_alloc_hoare al n bs : 
-    {{{ is_heap al bs }}} 
-      heap_alloc #al #n
-    {{{ vret, RET vret; 
-       (∃ l, ⌜vret = SOMEV #l⌝ ∗ 
-          ([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v) ∗ 
-          is_valid_loc l al ∗ is_heap al bs)
-        ∨ 
-      ⌜vret = NONEV⌝ ∗ is_heap al bs
-    }}}.
-  Proof. Admitted.
   *)
+
+  (* TODO(Ben): move to test.v later *)
+
+  (*From AllSrc.iris_heap_lang_asm.lib Require Import unwrap.*)
+  From AllSrc.iris_heap_lang_asm.lib Require Import diverge.
+  
+  Definition unwrap: val := λ: "x",
+    match: "x" with SOME("v") => "v" | NONE => diverge #()
+    end.
+
+  (* this one does work how about the other..?*)
+  Lemma unwrap_hoare (v: val) (x: val):
+  {{{ ⌜x = SOMEV(v) ∨ x = NONEV⌝ }}}
+    unwrap x
+  {{{ RET v; ⌜x = NONEV-> False⌝ }}}.
+  Proof.
+    iIntros (Φ) "%lx HY".
+    destruct lx; rewrite H; wp_lam; wp_pure; wp_pure.
+    * wp_pures. by iApply "HY".
+    * wp_pure. iLöb as "IH". wp_lam. by wp_apply "IH".
+  Qed. 
+  Local Definition test_program : val := λ: "_", 
+    let: "al" := heap_new_alloc #() in
+    let: "l1" := unwrap (heap_alloc "al" #(BLOCK_SIZE - 1)%nat) in
+    let: "l2" := unwrap (heap_alloc "al" #(BLOCK_SIZE - 3)%nat) in
+    "l1" <- #1 ;;
+    ("l1" + #1) <- #2 ;;
+    "l2" <- #3 ;; 
+    ("l2" + #1) <- #4 ;;
+    heap_free "l1" ;;
+    heap_free "l2". 
+    (*TODO(Ben): heap_dealloc "al".*)
+  
+  Local Lemma test_progam_hoare :
+    {{{ emp }}} 
+      test_program #() 
+    {{{ RET #(); emp }}}.
+  Proof. 
+    iIntros (φ) "_ Hphi". iUnfold test_program.
+    wp_pures. wp_apply (heap_new_alloc_hoare); [done|].
+    iIntros (al) "Hp". wp_pures.
+    wp_apply (heap_alloc_hoare with "Hp"). 
+    iIntros (v) "[(%l & -> & Hun & Hv & Hp)|(-> & H)]"; 
+    wp_apply unwrap_hoare;
+    [iPureIntro; by left| 
+    |iPureIntro; by right|iIntros; by specialize (H eq_refl)].
+    (* why does this unwrap shelve things?*)
+    iIntros. wp_pures.
+    wp_apply (heap_alloc_hoare with "Hp"). 
+    iIntros (v) "[(%l' & -> & Hun' & Hv' & Hp)|(-> & H)]"; 
+    wp_apply unwrap_hoare;
+    [iPureIntro; by left| 
+    |iPureIntro; by right|iIntros; by specialize (H0 eq_refl)].
+    iIntros. wp_pures.
+    iDestruct "Hun" as "((%v0 & Hl0) & (%v1 & Hl1) & Hun)".
+    iDestruct "Hun'" as "((%v2 & Hl2) & (%v3 & Hl3) & Hun')".
+    rewrite 2!Z.add_0_r.
+    wp_store. wp_store. wp_store. wp_store. 
+    wp_apply (heap_free_hoare with "[Hp Hl0 Hl1 Hun Hv]").
+    { iFrame. rewrite Z.add_0_r. auto. }
+    iIntros "Hp". wp_pures.
+    wp_apply (heap_free_hoare with "[Hp Hl2 Hl3 Hun' Hv']").
+    { iFrame. rewrite Z.add_0_r. auto. }
+    iIntros "Hp". by iApply "Hphi".
+    (* TODO(Ben): dealloc *) 
+    Unshelve.
+  Admitted.
 
 End HAlloc. End HAlloc.

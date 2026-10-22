@@ -116,8 +116,7 @@ Module HAlloc. Section HAlloc.
       ([∗ list] lp ∈ Lq,  
           ∃ fbs,
           ⌜(multiplicity lp L = (res - fbs) + 1)%nat⌝ ∗
-          (* do we need to store a my_frac here for deallocation maybe? *)
-          (*my_frac γ lp ∗*)
+          my_frac γ lp ∗ (*TODO(Ben): probably needed for dealloc?*)
           ⌜(PAGE_ALIGN | lp)%Z⌝ ∗
           PAlloc.is_page lp BLOCK_SIZE res fbs ∗ 
           (lp + f_in_full)%Z ↦ #false ∗
@@ -125,7 +124,7 @@ Module HAlloc. Section HAlloc.
       ([∗ list] lp ∈ Lf, 
           ∃ fbs,
           ⌜(multiplicity lp L = (res - fbs) + 1)%nat⌝ ∗
-          (*my_frac γ lp ∗*)
+          my_frac γ lp ∗
           ⌜(PAGE_ALIGN | lp)%Z⌝ ∗
           PAlloc.is_page lp BLOCK_SIZE res fbs ∗ 
           (lp + f_in_full)%Z ↦ #true ∗
@@ -248,7 +247,7 @@ Module HAlloc. Section HAlloc.
       apply NoDup_cons in Hd as [Hd1 Hd2].
       destruct (list_elem_of_split _ _ H0) as (L1 & L2 & HLq). rewrite HLq. 
       iPoseProof ((big_sepL_get_middle _ L1 L2 lmd) with "Hp1") 
-      as "((%fbs & %Hm & %Ha & Hp & Hif & Hh) & Hp1)". wp_load. wp_pures. 
+      as "((%fbs & %Hm & Hfracp & %Ha & Hp & Hif & Hh) & Hp1)". wp_load. wp_pures. 
       wp_apply (PAlloc.page_free_hoare with "[Hp Hun Hvl]"); [iFrame|].
       iIntros "Hp". wp_pures. iApply "Hphi". iExists Lq, Lf, res.
       destruct (decide (lmd ∈ Lf)). (* this gets us lmd ∉ Lf, needed later *)
@@ -286,7 +285,7 @@ Module HAlloc. Section HAlloc.
       [apply H0|apply e|iFrame|done]. }
     destruct (list_elem_of_split _ _ H0) as (L1 & L2 & HLf). rewrite HLf. 
     iPoseProof ((big_sepL_get_middle _ L1 L2 lmd) with "Hp2") 
-    as "((%fbs & %Hm & %Ha & Hp & Hif & Hh) & Hp2)". 
+    as "((%fbs & %Hm & Hfracp & %Ha & Hp & Hif & Hh) & Hp2)". 
     wp_load. wp_pures. wp_load. wp_pures. 
     wp_apply (IList.remove_hoare with "[Hil2]"); [by rewrite Z.add_0_r|].
     iIntros "(Hlmdl & Hil2)". wp_pures.
@@ -350,7 +349,7 @@ Module HAlloc. Section HAlloc.
       simpl; [done|lia]. }
     rewrite Hind. wp_pures. 
     iPoseProof (big_sepL_snoc with "Hp1") as "(Hp1 & Hpx)".
-    iDestruct "Hpx" as "(%fbs & %Hml & %Hax & Hp & Hinf & Hal)".
+    iDestruct "Hpx" as "(%fbs & %Hml & Hfracx & %Hax & Hp & Hinf & Hal)".
     destruct (decide (res < fbs)).
     { by iPoseProof (PAlloc.page_res_geq_fbs with "Hp") as "Hcon". }
     iPoseProof (IList.pred_unique with "Hil1") as "(Hil1 & %Hnd)".  
@@ -397,7 +396,7 @@ Module HAlloc. Section HAlloc.
       iIntros (v1 v2) "(Hil1 & Hx)". wp_pures.
       wp_apply (IList.push_front_hoare with "[Hil2 Hx]"); [iFrame|].
       iIntros "Hil2". wp_pures. wp_store. fold queue_alloc.
-      iApply (IHLq with "[Hp1 Hp2 Hil1 Hil2 Hauth Hp Hinf Hal]"). 
+      iApply (IHLq with "[Hp1 Hp2 Hil1 Hil2 Hauth Hp Hinf Hal Hfracx]"). 
       { iFrame. iFrame. iSplitR; [iPureIntro; lia|]. 
         rewrite -app_assoc /= in Hdom. auto. }
       iNext. iIntros (v) "[H | H]". iApply "Hphi". 
@@ -426,8 +425,7 @@ Module HAlloc. Section HAlloc.
     wp_pures. 
     wp_apply (queue_alloc_hoare with "[Hauth Hil1 Hil2 Hp1 Hp2]"); 
     [by iFrame|]. iIntros (v) "[H | H]".
-    { (*what is we get PAlloc.is_valid l al here? instead? do we know page? *)
-      iDestruct "H" as "(%Lq' & %Ld & %Lf' & %l &->&->&->& Hl &Hlv & Hh)".
+    { iDestruct "H" as "(%Lq' & %Ld & %Lf' & %l &->&->&->& Hl &Hlv & Hh)".
       wp_pures. iApply "Hphi". iLeft. by iFrame. }
     iDestruct "H" as "(-> & %res' & %L' & %Hr' & %Hr2' & %Hdom' & Hauth & 
     Hil1 & Hil2 & Hp1 & Hp2)". wp_pures. 

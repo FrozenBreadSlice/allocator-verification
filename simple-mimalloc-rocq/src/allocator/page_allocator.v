@@ -151,6 +151,10 @@ Module PAlloc. Section PAlloc.
     
   Definition is_valid_loc_internal l al bs res : iProp Σ := 
     ∃ ld i, ⌜ld = (al + MDSIZE)%Z⌝ ∗ ⌜l = (ld + (i * bs))%Z⌝ ∗ ⌜i < res⌝.
+
+  Global Instance is_valid_loc_internal_presist l al bs res : 
+    Persistent (is_valid_loc_internal l al bs res).
+  Proof. apply _. Qed.
     
   Definition is_valid_loc l al : iProp Σ := 
     ∃ bs res, 
@@ -172,12 +176,7 @@ Module PAlloc. Section PAlloc.
     | S s => ∃ l1, fl ↦ SOMEV #l1 ∗ is_freelist_rec l1 al bs res s 
     end.
   
-  (* TODO(Ben): now there is no point in is valid,  
-     since all it needs is bs and res.. so could just pass 
-     but without res deallocation becomes annoying 
-     since you need to now fbs = res and doing 
-     this in another way seems tedious *)
-  Definition is_page al bs res fbs : iProp Σ := 
+  Definition is_page (al : loc) (bs res fbs : nat) : iProp Σ := 
     ∃ cap ld size1 size2 , 
       ⌜(0 < al)%Z⌝ ∗  ⌜0 < res⌝ ∗ ⌜0 < bs⌝ ∗ ⌜cap ≤ res⌝ ∗ 
       ⌜ld = (al + MDSIZE)%Z⌝ ∗
@@ -197,7 +196,9 @@ Module PAlloc. Section PAlloc.
     {{{ ⌜0 < res⌝ ∗ ⌜0 < bs⌝ ∗ ⌜0 < a⌝ }}} 
       page_new_alloc #res #bs #a 
     {{{ al, RET #al; 
-        is_page al bs res res ∗ al ↦∗ [NONEV; NONEV] ∗ ⌜Z.divide a al⌝
+        is_page al bs res res ∗ 
+        al ↦∗ [NONEV; NONEV; NONEV; NONEV] ∗ 
+        ⌜Z.divide a al⌝
     }}}.
   Proof. 
     iIntros (φ) "(%Hn & %Hbs & %Ha) Hphi". iUnfold page_new_alloc. 
@@ -208,7 +209,8 @@ Module PAlloc. Section PAlloc.
     simpl. rewrite !array_cons. rewrite <- !Z.add_assoc. 
     iDestruct "HalN" as "(Hal & Hal1 & Hal2 & Hal3 & Hal4 & Hal5 & Hal6 & Hal7 & 
     Hal8 & HalN)". wp_store. wp_store. wp_store. wp_store. wp_store. 
-    iApply "Hphi". iFrame "Hal Hal1 Ha". rewrite array_nil. iSplitL; [|done]. 
+    iApply "Hphi". rewrite 3!Z.add_assoc. iFrame "Hal Hal1 Hal2 Hal3 Ha".
+    rewrite array_nil. iSplitL; [|done]. 
     iFrame. iExists 0, (al + MDSIZE)%Z, 0, 0.
     iSplitR; [done|]. iSplitR; [done|]. iSplitR; [iPureIntro; lia|]. 
     iSplitR; [done|]. iSplitR; [iPureIntro; lia|].
@@ -319,7 +321,7 @@ Module PAlloc. Section PAlloc.
     iSplitR; [done|]. iSplitR; [done|]. iSplitR; [done|].
     iSplitR. { iPureIntro. lia. }
     iCombine "Hres" "Hres'" as "Hres". iCombine "Hbs" "Hbs'" as "Hbs". 
-    rewrite -page_frac_to_free_fac. by iFrame.
+    rewrite -page_frac_to_free_frac. by iFrame.
   Qed.
 
   Lemma page_dealloc_hoare al bs res : 
@@ -389,8 +391,9 @@ Module PAlloc. Section PAlloc.
     }}} 
       page_extend #al #ld 
     {{{ vret, RET vret; 
-      ((∃ l, ⌜vret = SOMEV #l⌝ ∗ (([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v)) ∗ 
-      is_valid_loc l al ∗ is_page al bs res (fbs - 1)) 
+      ((∃ l, ⌜vret = SOMEV #l⌝ ∗ ⌜fbs > 0⌝ ∗ 
+        (([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v)) ∗ 
+        is_valid_loc l al ∗ is_page al bs res (fbs - 1)) 
         ∨  
       ⌜vret = NONEV⌝ ∗ ⌜fbs = 0⌝ ∗ is_page al bs res fbs) 
     }}}.
@@ -408,10 +411,10 @@ Module PAlloc. Section PAlloc.
       rewrite replicate_add array_app. iDestruct "Hun" as "(Hun1 & Hun2)". 
       iIntros "Hfl". wp_store. wp_pures. iApply "Hphi". iLeft.
       rewrite length_replicate Z.add_0_l Z.sub_diag Z.mul_0_l Z.add_0_r. 
-      iExists ld. iSplitR; [done|]. iSplitL "Hun1".
+      iExists ld. iSplitR; [done|]. iSplitR; [done|]. iSplitL "Hun1".
       { iApply big_sepL_mono; [|by iApply seq_array_pointsto_eq]. 
         iIntros. auto. }
-      rewrite page_frac_to_free_fac.
+      rewrite page_frac_to_free_frac.
       iDestruct "Hres" as "(Hresp & Hres1)".
       iDestruct "Hbs" as "(Hbsp & Hbs1)".
       iSplitL "Hres1 Hbs1". 
@@ -438,6 +441,7 @@ Module PAlloc. Section PAlloc.
       rewrite Nat.mul_add_distr_r Nat.mul_1_l replicate_add array_app.
       iDestruct ("Hun2") as "(Hun1 & Hun2)". iLeft. 
       rewrite length_replicate -!Z.add_assoc. iExists _. iSplitR; [done|]. 
+      iSplitR; [iPureIntro; lia|].
       iSplitL "Hun1". 
       { replace ((5 + (cap + cap - 1) * bs)%Z)  (*relies on earlier asserts*)
         with (5 + cap * bs + ((cap - 1) * bs)%nat)%Z by lia. 
@@ -446,7 +450,7 @@ Module PAlloc. Section PAlloc.
         by replace (ld + (cap * bs + ((cap - 1) * bs)%nat))%Z 
         with (ld + (cap + cap - 1) * bs)%Z by lia. }
       assert (fbs > 0) by lia. destruct fbs; [lia|].
-      rewrite page_frac_to_free_fac. 
+      rewrite page_frac_to_free_frac. 
       iDestruct "Hres" as "(Hresp & Hres1)".
       iDestruct "Hbs" as "(Hbsp & Hbs1)".
       iSplitL "Hres1 Hbs1". 
@@ -483,10 +487,11 @@ Module PAlloc. Section PAlloc.
     iIntros "Hfl". wp_store. wp_pures. iApply "Hphi". iLeft.
     assert ((ld + cap * bs + ((res - cap - 1) * bs)%nat)%Z 
     = (ld + (cap + (res - cap) - 1) * bs)%Z) by lia. rewrite H3. 
-    iExists _. iSplitR; [done|]. iSplitL "Hun2".
+    iExists _. iSplitR; [done|]. iSplitR; [iPureIntro; lia|].
+    iSplitL "Hun2".
     { iApply big_sepL_mono; [|by iApply seq_array_pointsto_eq]. iIntros. auto. }
     assert (fbs > 0) by lia. destruct fbs; [lia|].
-    rewrite page_frac_to_free_fac. 
+    rewrite page_frac_to_free_frac. 
     iDestruct "Hres" as "(Hresp & Hres1)".
     iDestruct "Hbs" as "(Hbsp & Hbs1)".
     iSplitL "Hres1 Hbs1". 
@@ -506,7 +511,7 @@ Module PAlloc. Section PAlloc.
     {{{ is_page al bs res fbs }}}
       page_alloc #al
     {{{ vret, RET vret; 
-      (∃ l, ⌜vret = SOMEV #l⌝ ∗ 
+      (∃ l, ⌜vret = SOMEV #l⌝ ∗ ⌜fbs > 0⌝ ∗
           ([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v) ∗ 
           is_valid_loc l al ∗ is_page al bs res (fbs - 1))
         ∨ 
@@ -517,7 +522,8 @@ Module PAlloc. Section PAlloc.
     %Hf & Hcap & Hres & Hbs & Hfl & Hfl2 & Hun) Hphi". 
     iUnfold page_alloc. wp_pures. 
     wp_apply (freelist_pop_hoare with "[Hfl]"); [by iFrame|].
-    iIntros (v) "[(-> & -> & Hfl) | (%l & %s & -> & %Hs & Hlbs & Hlv & Hfl)]"; 
+    iIntros (v) "[(-> & -> & Hfl) | 
+    (%l & %s & -> & %Hs & Hlbs & Hlv & Hfl)]"; 
     wp_pures.
     { wp_apply (freelist_pop_hoare with "[Hfl2]"); [by iFrame|].
       iIntros (v) "[(-> & -> & Hfl2) | 
@@ -528,28 +534,60 @@ Module PAlloc. Section PAlloc.
       [|iDestruct "Hfl2" as "(%l1 & Hfl2 & Hflr)"]; 
       wp_load; wp_store; wp_store; wp_pures; iApply "Hphi"; iLeft.
       - iFrame. iSplitR; [done|]. destruct fbs; [lia|]. 
-        rewrite page_frac_to_free_fac.
+        rewrite page_frac_to_free_frac.
         iDestruct "Hres" as "(Hresp & Hres1)".
         iDestruct "Hbs" as "(Hbsp & Hbs1)".
+        iSplitR; [iPureIntro; lia|].
         iSplitL "Hres1 Hbs1"; [by iFrame|].
         replace (S fbs - 1) with fbs by lia.
         iExists 0, 0. iFrame. iPureIntro. lia.
       - iFrame.  
         iSplitR; [done|]. destruct fbs; [lia|]. 
-        rewrite page_frac_to_free_fac.
+        rewrite page_frac_to_free_frac.
         iDestruct "Hres" as "(Hresp & Hres1)".
         iDestruct "Hbs" as "(Hbsp & Hbs1)".
+        iSplitR; [iPureIntro; lia|].
         iSplitL "Hres1 Hbs1"; [by iFrame|].
         replace (S fbs - 1) with fbs by lia.
         iExists (S s'), 0. iFrame. iPureIntro. lia. }
-    iApply "Hphi". iLeft. iFrame. 
-    iSplitR; [done|]. destruct fbs; [lia|]. 
-    rewrite page_frac_to_free_fac.
+    iApply "Hphi". iLeft. iFrame. iSplitR; [done|]. 
+    destruct fbs; [lia|]. rewrite page_frac_to_free_frac.
     iDestruct "Hres" as "(Hresp & Hres1)".
     iDestruct "Hbs" as "(Hbsp & Hbs1)".
+    iSplitR; [iPureIntro; lia|].
     iSplitL "Hres1 Hbs1"; [by iFrame|].
     replace (S fbs - 1) with fbs by lia.
     iFrame. iPureIntro. lia.
   Qed.
+
+  Lemma page_res_geq_fbs al bs res fbs : 
+    res < fbs → 
+    is_page al bs res fbs ⊢ False.
+  Proof.
+    iIntros (Hgeq) "Hp".
+    iDestruct "Hp" as "(%cap & %ld & %b1 & %b2 & %Hal & %Hr & %Hbs & 
+    %Hcr & -> & %Hf & Hcap & Hres & Hbs & Hfl & Hfl2 & Hun)". 
+    assert (fbs = res + (fbs - res)) by lia.
+    remember (fbs - res) as d. destruct d; [lia|]. rewrite H. 
+    rewrite page_frac_split page_frac_own; [|done].
+    iDestruct (pointsto_valid with "Hres") as %Hv.
+    apply dfrac_valid in Hv. by apply Qp.not_add_le_l in Hv.
+  Qed.
    
+  Lemma get_usefull_pure_facts al bs res fbs l : 
+    PAlloc.is_page al bs res fbs -∗ 
+    PAlloc.is_valid_loc l al -∗ 
+    PAlloc.is_valid_loc_internal l al bs res ∗ ⌜(0 < al)%Z⌝ ∗ ⌜(0 < res)⌝.
+  Proof.
+    iIntros "(%cap & %ld & %b1 & %b2 & %Hal & %Hr & %Hbs & %Hcr & -> & 
+    %Hfbs & Hcap & Hres & Hbs & Hfl & Hfl2 & Hun) (%bs' & %res' & Hbs' & Hres'
+    & Hint)". 
+    iSplitL; [|done]. 
+    iCombine "Hres" "Hres'" gives %[_ Heqres].
+    iCombine "Hbs" "Hbs'" gives %[_ Heqbs].
+    apply inject_litint_nat in Heqres.
+    apply inject_litint_nat in Heqbs.
+    by simplify_eq.
+  Qed.
+
 End PAlloc. End PAlloc.

@@ -66,7 +66,7 @@ Section seq.
   Qed.
 
   Lemma pred_start_unique_elem_of {s e : loc} (L : list loc) :
-    s ∈ L -> is_seq s L e ⊢ False.
+    s ∈ L → is_seq s L e ⊢ False.
   Proof.
     iIntros (H) "H".
     assert (∃ L1 L2, L = L1 ++ s :: L2).
@@ -99,7 +99,7 @@ Section seq.
       iDestruct "H" as "(H & %H)". iFrame. iPureIntro.
       by apply NoDup_cons_2.
   Qed.
-
+  
   Lemma new_spec {s e: loc} {v} :
     {{{ s ↦ v }}} 
       new #s #e

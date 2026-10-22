@@ -11,6 +11,8 @@ Section IList.
   Definition is_ilist := DCycle.pred.
 
   Definition pred_unique := DCycle.pred_unique.
+
+  Definition pred_unique_cycle := DCycle.pred_unique_cycle.
  
   Definition new := DCycle.new. 
 
@@ -65,9 +67,9 @@ Section IList.
       wp_pures. iApply "Hphi". by iFrame. }
     iPoseProof (pred_unique with "Hpl") as "(Hpl & %Hd)".
     assert (l ≠ lr).
-    { Search NoDup. apply NoDup_cons in Hd as [_ Hd].
+    { apply NoDup_cons in Hd as [_ Hd].
       apply NoDup_cons in Hd as [Hd _]. 
-      apply not_elem_of_app in Hd as [_ Hd]. Search (_ ∉ _ :: _).
+      apply not_elem_of_app in Hd as [_ Hd].
       by apply not_elem_of_cons in Hd as [Hd _]. }
     case_bool_decide; [simplify_eq|]. 
     wp_pure. fold remove. iApply ("IH" with "[Hpl]").

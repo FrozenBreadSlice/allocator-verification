@@ -62,6 +62,15 @@ Section Dcycle.
     iFrame.
   Qed.
 
+  Lemma pred_unique_cycle (s s' l : loc) (L L' : list loc) : 
+    l ∈ L → l ∈ L' → 
+    is_dcycle s L ∗ is_dcycle s' L' ⊢ False.
+  Proof.
+    iIntros (HlL HlL') "((Hc1a & Hc1b) & (Hc2a & Hc2b))".
+    iPoseProof (Cycle.pred_unique_cycle with "[Hc1a Hc2a]") as "Hc1a"; 
+    [apply HlL|apply HlL'|iFrame|done].
+  Qed.
+
   Definition new : val := λ: "l",
       Cycle.new ("l" + #0) ;;
       Cycle.new ("l" + #1).

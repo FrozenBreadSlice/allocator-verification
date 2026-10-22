@@ -22,6 +22,30 @@ Section cycle.
     is_cycle c L ⊢ is_cycle c L ∗ ⌜NoDup (c::L)⌝. 
   Proof. apply Seq.pred_unique. Qed.
 
+  Lemma pred_rotateN s' s L1 L2 :
+    is_cycle s' (L1 ++ s :: L2) ⊢ is_cycle s (L2 ++ s' :: L1). 
+  Proof.
+    unfold is_cycle. rewrite !Seq.split. iIntros "(H1 & H2)". iFrame.
+  Qed.
+
+  Lemma pred_unique_cycle {s s' l : loc} (L L' : list loc) : 
+    l ∈ L → l ∈ L' → 
+    is_cycle s L ∗ is_cycle s' L' ⊢ False.
+  Proof.
+    iIntros (HlL HlL') "(Hc1 & Hc2)".
+    assert (∃ L1 L2, L = L1 ++ l :: L2).
+    { apply in_split. by apply list_elem_of_In. }
+    assert (∃ L1 L2, L' = L1 ++ l :: L2).
+    { apply in_split. by apply list_elem_of_In. }
+    destruct H as (L1 & L2 & ->).
+    destruct H0 as (L1' & L2' & ->).
+    rewrite pred_rotateN (pred_rotateN s'). 
+    destruct L2', L2; simpl; rewrite /is_cycle !Seq.pred_cons; 
+    iDestruct "Hc1" as "(Hc1 & _)"; iDestruct "Hc2" as "(Hc2 & _)"; 
+    iCombine "Hc1" "Hc2" gives %[H1 _]; rewrite dfrac_op_own in H1; 
+    rewrite dfrac_valid_own in H1; by apply Qp.not_add_le_r in H1.
+  Qed.
+
   Definition new : val      :=  λ: "l", Seq.new "l" "l".
 
   Definition is_empty : val := λ: "l", !"l" = "l".

@@ -600,7 +600,7 @@ Proof.
     eexists (1 + j)%Z, _. rewrite Z.add_assoc !Z.add_1_l Z2Nat.inj_succ; auto with lia.
   - intros (j & w & ? & -> & -> & Hil). destruct (decide (j = 0)); simplify_eq/=.
     { rewrite Z.add_0_r; eauto. }
-    right. split. Search Z Inj.
+    right. split. 
     { rewrite -{1}(Z.add_0_r l). lia. }
     assert (Z.to_nat j = S (Z.to_nat (j - 1))) as Hj.
     { rewrite -Z2Nat.inj_succ; last lia. f_equal; lia. }
@@ -767,7 +767,6 @@ Lemma up_align_aligns_up_2 l a :
   (l ≤ x)%Z.
 Proof.
   simpl. intros. unfold up_align.
-  Search (_ `quot` _)%Z.
   assert (l = a * l `quot` a + l `rem` a)%Z as Heql;
   [apply Z.quot_rem'|].
   remember (l `quot` a)%Z as x.
@@ -806,9 +805,8 @@ Lemma fresh_fresh_0 ls i : (0 ≤ i)%Z → (loc_fresh ls + i)%Z ∉ ls.
 Proof.
   intros Hi. cut (∀ l, l ∈ ls → (l < ((loc_fresh ls) + i)%Z)%Z).
   { intros help Hf%help. simpl in *. lia. }
-  About set_fold_ind_L.
   apply (set_fold_ind_L (λ r ls, ∀ l, l ∈ ls → (l < r + i)%Z));
-    set_solver by eauto with lia.
+  set_solver by eauto with lia.
 Qed.
 
 Lemma loc_fresh_positive ls : 

@@ -22,6 +22,7 @@ Module HAlloc. Section HAlloc.
   Implicit Types al l lq lf : loc.
   Implicit Types res bs fbs i n : nat.
   Implicit Types Lq Lf : list loc.
+  Implicit Types Lqs : list (list loc).
   Implicit Types γ : gname.
 
   (* index in page for things owned by heap *)
@@ -31,38 +32,63 @@ Module HAlloc. Section HAlloc.
 
   (* index in heap *)
   Definition f_queue : nat := 0.
-  Definition f_full : nat := 2.
+  Definition f_queue_2 : nat := 2.
+  Definition f_full : nat := 4.
   
   (* other constans *)
-  Definition num_f : nat := 2.
-  Definition queue_size : nat := 2.
-
-  (* TODO(Ben): more queues with block sizes later *)
+  Definition NUM_QUEUES : nat := 2.
   Definition BLOCK_SIZE : nat := 16. 
+  Definition BLOCK_SIZE_2 : nat := 32. 
+
   Definition PAGE_ALIGN : nat := 128.  
 
+  Definition num_f : nat := 1 + NUM_QUEUES.
+  Definition queue_start : nat := 0.
+  Definition queue_size : nat := 2.
+
+  
   (* 
     function definitions
   *)
+  Definition heap_queue_from_ind : val := λ: "heap" "ind", 
+    "heap" + #queue_start + "ind" * #queue_size.
+
+  Definition init_queue_ilists : val := rec: "rec" "heap" "ind" :=
+    if: "ind" < #NUM_QUEUES 
+    then IList.new (heap_queue_from_ind "heap" "ind") ;;
+         "rec" "heap" ("ind" + #1)
+    else #().
 
   Definition heap_new_alloc : val := λ: "_", 
     let: "al" := AllocN (#num_f * #queue_size) #1 NONE in 
-    IList.new ("al" + #f_queue) ;;
+    init_queue_ilists "al" #0 ;;
     IList.new ("al" + #f_full) ;;
     "al".
 
+  Definition heap_bin : val := λ: "n", 
+    if: "n" < #(BLOCK_SIZE + 1) then #0 
+    else if: "n" < #(BLOCK_SIZE_2 + 1) then #1 
+    else #NUM_QUEUES. (*error value*)
+
+  (*
+  Definition heap_page_to_class : val := λ: 
+  *)
+  
   Definition heap_free : val := λ: "l", 
     let: "lmd" := ("l" `quot` #PAGE_ALIGN) * #PAGE_ALIGN in
     if: !("lmd" + #f_in_full) 
     then 
+      (* heap_page_to_class *)
       let: "heap" := !("lmd" + #f_heap) in 
       match: IList.remove ("heap" + #f_full) ("lmd" + #f_list) with 
         NONE => assert:#false 
       | SOME "lp" => 
-        IList.push_front ("heap" + #f_queue) "lp" ;;
+          let: "pq" := heap_queue_from_ind "heap" (heap_bin ("lp" + #PAlloc.f_bs)) in  
+        IList.push_front "pq" "lp" ;;
         ("lp" + #f_in_full) <- #false ;;
         PAlloc.page_free "lmd" "l" ;; #()
       end
+      (* end heap_page_to_class *)
     else  
       PAlloc.page_free "lmd" "l";; #(). 
   (* TODO(Ben): can we remove this and still get fancy update?*)
@@ -80,10 +106,11 @@ Module HAlloc. Section HAlloc.
       | SOME "l" => SOME "l"
       end.
 
-   Definition heap_alloc : val := λ: "al" "n", 
-    if: #BLOCK_SIZE < "n" then NONE 
-    else
-      let: "bsq" := ("al" + #f_queue) in 
+  Definition heap_alloc : val := λ: "al" "n", 
+    let: "ind" := heap_bin "n" in 
+    if: "ind" = #NUM_QUEUES then NONE 
+    else 
+      let: "bsq" := heap_queue_from_ind "al" "ind" in 
       let: "full" := ("al" + #f_full) in 
       match: queue_alloc "bsq" "full" with 
         NONE => 
@@ -104,43 +131,77 @@ Module HAlloc. Section HAlloc.
   Local Definition alignment_condition (a bs res mds : nat) := 
     0 < a ∧ 0 < bs ∧ mds < bs ∧ 0 < res ∧ 
     res = Z.to_nat (a `quot` bs - 1)%Z. 
-   
-  Definition is_heap_internal γ (al : loc) (Lq Lf : list loc) : iProp Σ :=
-    ∃ res (L : gmultiset loc), 
-      ⌜PAlloc.MDSIZE < BLOCK_SIZE⌝ ∗
-      ⌜res = Z.to_nat (PAGE_ALIGN `quot` BLOCK_SIZE - 1)%Z⌝ ∗
-      ⌜dom L = list_to_set (Lq ++ Lf)⌝ ∗
+
+  Local Definition queue_from_ind (lh : loc) (ind : nat) := 
+    (lh + queue_start + ind * queue_size)%Z.
+
+  (* should always have NUM_QUEUES entries *)
+  Local Definition bs_from_ind (ind : nat) := 
+    match ind with 
+    | 0 => BLOCK_SIZE 
+    | 1 => BLOCK_SIZE_2
+    | _ => 0 
+    end.
+
+  Definition is_heap_internal γ (al : loc) (Lqs : list (list loc)) (Lf : list loc) : iProp Σ :=
+    ∃ (L : gmultiset loc), 
+      ⌜length Lqs = NUM_QUEUES⌝ ∗
+      ⌜PAlloc.MDSIZE < bs_from_ind 0⌝ ∗ 
+      ⌜dom L = list_to_set (concat Lqs ++ Lf)⌝ ∗
       my_auth γ L ∗ 
-      IList.is_ilist (al + f_queue)%Z Lq ∗ 
+      (* queue intrusive lists *)
+      ([∗ list] i ∈ seq 0 NUM_QUEUES, 
+        IList.is_ilist (queue_from_ind al i) (nth i Lqs [])) ∗
+      (* full intrusive list *)
       IList.is_ilist (al + f_full)%Z Lf ∗
-      ([∗ list] lp ∈ Lq,  
-          ∃ fbs,
+      (* queues *)
+      ([∗ list] i ∈ seq 0 NUM_QUEUES, 
+        ([∗ list] lp ∈ (nth i Lqs []),  
+          ∃ fbs res bs,
+          ⌜bs = bs_from_ind i⌝ ∗
+          ⌜res = Z.to_nat (PAGE_ALIGN `quot` bs - 1)%Z⌝ ∗
           ⌜(multiplicity lp L = (res - fbs) + 1)%nat⌝ ∗
-          my_frac γ lp ∗ (*TODO(Ben): probably needed for dealloc?*)
+          my_frac γ lp ∗ 
           ⌜(PAGE_ALIGN | lp)%Z⌝ ∗
-          PAlloc.is_page lp BLOCK_SIZE res fbs ∗ 
+          PAlloc.is_page lp bs res fbs ∗ 
           (lp + f_in_full)%Z ↦ #false ∗
-          (lp + f_heap)%Z ↦ #al) ∗
+          (lp + f_heap)%Z ↦ #al)) ∗
+      (* full list *)
       ([∗ list] lp ∈ Lf, 
-          ∃ fbs,
+          ∃ fbs i res bs,
+          ⌜i < NUM_QUEUES⌝ ∗
+          ⌜bs = bs_from_ind i⌝ ∗
+          ⌜res = Z.to_nat (PAGE_ALIGN `quot` bs - 1)%Z⌝ ∗
           ⌜(multiplicity lp L = (res - fbs) + 1)%nat⌝ ∗
           my_frac γ lp ∗
           ⌜(PAGE_ALIGN | lp)%Z⌝ ∗
-          PAlloc.is_page lp BLOCK_SIZE res fbs ∗ 
+          PAlloc.is_page lp bs res fbs ∗ 
           (lp + f_in_full)%Z ↦ #true ∗
           (lp + f_heap)%Z ↦ #al).
 
   Definition is_heap γ al : iProp Σ := 
-    ∃ Lq Lf, is_heap_internal γ al Lq Lf.
+    ∃ Lqs Lf, is_heap_internal γ al Lqs Lf.
 
   Definition is_valid_loc γ (l al : loc) : iProp Σ := 
     let lmd := down_align l PAGE_ALIGN in 
-    my_frac γ lmd ∗   
+    my_frac γ lmd ∗ 
     PAlloc.is_valid_loc l lmd.
   
   (*
     Hoare triples and proofs
   *)
+
+  (*
+  Search big_sepL.
+  Local Lemma test (: 
+    nth y Lqs = Lq ->
+    length Lqs = n -> 
+    ([∗ list] i ∈ seq 0 n, P i) 
+    ⊣⊢
+    P y ∗
+    ([∗ list] i ∈ seq 0 y ++ seq (y + 1) (n - (y + 1)), P i). 
+  *)
+
 
   Local Lemma sanity_check (a bs res mds : nat) : 
     alignment_condition a bs res mds → 
@@ -186,24 +247,60 @@ Module HAlloc. Section HAlloc.
     repeat (split; (try (done || lia))).
   Qed.
 
-  Local Lemma in_internal_lists γ al l Lq Lf : 
-    is_heap_internal γ al Lq Lf -∗ 
+  Local Lemma in_internal_lists γ al l Lqs Lf : 
+    is_heap_internal γ al Lqs Lf -∗ 
     is_valid_loc γ l al -∗ 
-    is_heap_internal γ al Lq Lf ∗ is_valid_loc γ l al ∗ 
-    ⌜down_align l PAGE_ALIGN ∈ (Lq ++ Lf)⌝.
+    is_heap_internal γ al Lqs Lf ∗ is_valid_loc γ l al ∗ 
+    ⌜down_align l PAGE_ALIGN ∈ (concat Lqs ++ Lf)⌝.
   Proof.
     iIntros "Hh Hvl".
-    iDestruct "Hh" as "(%res & %L & %Hc1 & %Hc2 & %Hdom & Hauth & Hil1 &
-    Hil2 & Hp1 & Hp2)".
+    iDestruct "Hh" as "(%L & %HLqs & %Hmdbs & %Hdom & Hauth & Hils &
+    Hilf & Hqps & Hfp)".
     iDestruct "Hvl" as "(Hfrac & Hvl)".
     remember (down_align l PAGE_ALIGN) as lmd.
-    iAssert (⌜lmd ∈ L⌝ -∗ ⌜lmd ∈ (Lq ++ Lf)⌝)%I as "H".
+    iAssert (⌜lmd ∈ L⌝ -∗ ⌜lmd ∈ (concat Lqs ++ Lf)⌝)%I as "H".
     { iPureIntro. intros. set_solver. }
     iPoseProof (my_auth_my_frac_agree with "Hauth Hfrac") as "%H'".
     iFrame. iSplit; [auto|]. iSplitL; [rewrite Heqlmd; iFrame|].
     by iApply "H".
   Qed.
-     
+
+  Local Lemma heap_queue_from_ind_hoare al i : 
+    {{{ emp }}} 
+      heap_queue_from_ind #al #i
+    {{{ l, RET #l; ⌜queue_from_ind al i = l⌝ }}}.
+  Proof. 
+    iIntros (φ) "_ Hphi". iUnfold heap_queue_from_ind.
+    wp_pures. iApply "Hphi". by iPureIntro.
+  Qed.
+      
+  Local Lemma init_queue_ilists_hoare al i d : 
+    d = NUM_QUEUES - i -> 
+    {{{ (al + (i * queue_size))%Z ↦∗ replicate (d * queue_size) NONEV }}} 
+      init_queue_ilists #al #i
+    {{{ RET #(); 
+      [∗ list] i ∈ seq i d, IList.is_ilist (queue_from_ind al i) [] 
+    }}}.
+  Proof. 
+    iInduction d as [|d IH] forall (i); simpl; iIntros (Hd φ) "Hli Hphi"; 
+    iUnfold init_queue_ilists; wp_pures.
+    { case_bool_decide; [lia|]. wp_pures. by iApply "Hphi". }
+    case_bool_decide; [|lia]. wp_pures. rewrite 2!array_cons.
+    iDestruct "Hli" as "(Hli & Hli1 & Hli2)".
+    wp_apply heap_queue_from_ind_hoare; [done|]. 
+    iIntros "%l' %Heq". simplify_eq.
+    wp_apply (DCycle.new_spec with "[Hli Hli1]").
+    { rewrite /queue_from_ind /queue_start Z.add_0_r. 
+      iFrame. by rewrite array_nil. }
+    iIntros "Hil". wp_pure. wp_pure. fold init_queue_ilists. wp_pure. 
+    replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+    wp_apply ("IH" with "[] [Hli2]"); [iPureIntro; lia| |].
+    - assert ((al + i * queue_size + 1 + 1)%Z 
+      = (al + (i + 1)%nat * queue_size)%Z) as Heq; [unfold queue_size; lia|].
+      by rewrite -Heq. 
+    - iIntros "H". iApply "Hphi". rewrite Nat.add_1_r. iFrame.
+  Qed.
+
   Lemma heap_new_alloc_hoare :
     {{{ emp }}}
       heap_new_alloc #() 
@@ -211,20 +308,26 @@ Module HAlloc. Section HAlloc.
   Proof. 
     iIntros (φ) "_ Hphi". iUnfold heap_new_alloc. wp_pures.
     wp_apply wp_allocN; [done|done|done|]. iIntros (l) "(_ & _ & [Hl _])".
-    wp_pures. unfold num_f, queue_size. 
-    replace (Z.to_nat (2%nat * 2%nat)) with (2 + 2) by lia.
-    rewrite replicate_add array_app length_replicate.
-    iDestruct "Hl" as "(H1 & H2)". simpl.
-    wp_apply (DCycle.new_spec with "[H1]"); [by rewrite Z.add_0_r|].
-    iIntros "Hq". wp_pures. wp_apply (DCycle.new_spec with "H2"). 
-    iIntros "Hf". wp_pures. iApply "Hphi". iUnfold is_heap.
-    iFrame. simpl. 
+    wp_pures.
+    assert (Z.to_nat (num_f * queue_size) = NUM_QUEUES * queue_size + queue_size).
+    { rewrite /num_f /queue_size /NUM_QUEUES. lia. }
+    rewrite H replicate_add array_app length_replicate. 
+    iDestruct "Hl" as "(Hl & Hlf)".
+    wp_apply ((init_queue_ilists_hoare l 0 NUM_QUEUES) with "[Hl]"); [lia| |].
+    { by rewrite Z.mul_0_l Z.add_0_r. }
+    iIntros "Hils". wp_pures. 
+    wp_apply (DCycle.new_spec with "[Hlf]").
+    { assert (f_full = NUM_QUEUES * queue_size). 
+      - rewrite /f_full /NUM_QUEUES /queue_size. lia.
+      - rewrite H0. iFrame. } 
+    iIntros "Hilf". wp_pures. iApply "Hphi". 
     iPoseProof (my_auth_unit) as "H". 
     iMod "H" as (γ) "Hauth". 
-    iExists γ, _, (∅ : gmultiset loc). iSplitR.
-    { rewrite /PAlloc.MDSIZE /BLOCK_SIZE. iPureIntro. lia. }
-    iSplitR; [done|]. iSplitR. 
-    { iPureIntro. set_solver. } auto.
+    iExists γ, (replicate NUM_QUEUES [] : list (list loc)), 
+    [], (∅ : gmultiset loc). 
+    simpl. iFrame. iSplitR. { iPureIntro. by unfold NUM_QUEUES. }
+    iSplitR. { rewrite /= /PAlloc.MDSIZE /BLOCK_SIZE. iPureIntro. lia. }
+    auto.
   Qed.
   
   Lemma heap_free_hoare γ l al : 
@@ -235,6 +338,56 @@ Module HAlloc. Section HAlloc.
       heap_free #l 
     {{{ RET #(); is_heap γ al }}}.
   Proof. 
+    iIntros (φ) "((%Lqs & %Lf & Hh) & Hun & Hvl) Hphi".
+    iPoseProof (in_internal_lists with "Hh Hvl") as 
+    "(Hh & (Hfrac & Hvl) & %HinL)". 
+    iDestruct "Hh" as "(%L & %HLqsl & %Hmds & %Hdom & Hauth & Hqils & 
+    Hilf & HLqs & HLf)". iUnfold heap_free. wp_pures.
+    remember (down_align l PAGE_ALIGN) as lmd.
+    assert (l `quot` PAGE_ALIGN * PAGE_ALIGN = lmd)%Z by done. rewrite H. 
+    apply elem_of_app in HinL. destruct HinL.
+    (* freeing page in Lqs *)
+    - (*iPoseProof (IList.pred_unique with "Hil1") as "(Hil1 & %Hd)".*)
+      assert (∃ Lq, Lq ∈ Lqs ∧ lmd ∈ Lq); [admit|].
+      destruct H1 as (Lq & HLqin & HlmdLq).
+      (*
+      rewrite seq 0 NUM_QEUEUS to 
+         seq 0 y ++ [y] ++ seq (y + 1) (NQ - (y + 1)) 
+      then 
+      big_sepL_get_middle.
+      this will get us Lq thing and then we do trick a gain 
+      *)
+      (* 
+        "HLqs" : [∗ list] i ∈ seq 0 NUM_QUEUES, [∗ list] lp ∈ 
+          nth i Lqs [], ∃ fbs res bs, ⌜bs = bs_from_ind i⌝ ∗
+                         ⌜res = Z.to_nat (PAGE_ALIGN `quot` bs - 1)⌝ ∗
+                         ⌜multiplicity lp L = (res - fbs + 1)%nat⌝ ∗
+                         my_frac γ lp ∗ ⌜(PAGE_ALIGN | lp)%Z⌝ ∗
+                         PAlloc.is_page lp bs res fbs ∗
+                         (lp + f_in_full)%Z ↦ #false ∗ 
+                         (lp + f_heap)%Z ↦ #al
+
+        need a lemma that says: 
+         or equally nth y Lqs = lq
+         Lq ∈ Lqs * HLqs <-> ([* list] lp ∈ Lq, ...) ∗ 
+
+         HLqs - this queue?
+         y could be anywhere in here how do we skip it?
+         "HLqs" : [∗ list] i ∈ seq 0 NUM_QUEUES, [∗ list] lp ∈ 
+          nth i Lqs [], ∃ fbs res bs, ⌜bs = bs_from_ind i⌝ ∗
+                         ⌜res = Z.to_nat (PAGE_ALIGN `quot` bs - 1)⌝ ∗
+                         ⌜multiplicity lp L = (res - fbs + 1)%nat⌝ ∗
+                         my_frac γ lp ∗ ⌜(PAGE_ALIGN | lp)%Z⌝ ∗
+                         PAlloc.is_page lp bs res fbs ∗
+                         (lp + f_in_full)%Z ↦ #false ∗ 
+                         (lp + f_heap)%Z ↦ #al
+
+      *)
+    (* freeing page in full list *)
+    - admit.
+
+
+    (*
     iIntros (φ) "((%Lq & %Lf & Hh) & Hun & Hvl) Hphi".
     iPoseProof (in_internal_lists with "Hh Hvl") as 
     "(Hh & (Hfrac & Hvl) & %HinL)". 
@@ -319,6 +472,7 @@ Module HAlloc. Section HAlloc.
     multiplicity_singleton_ne. lia.
     assert (lmd ∉ (L1 ++ L2)); [apply NoDup_cons_middle; by rewrite -HLf|].
     apply list_elem_of_lookup_2 in Hl. set_solver.
+    *)
   Qed.
  
   Local Lemma queue_alloc_hoare γ al Lq Lf : 

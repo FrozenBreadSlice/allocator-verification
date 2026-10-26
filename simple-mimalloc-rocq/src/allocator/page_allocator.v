@@ -3,12 +3,8 @@ From AllSrc.iris_heap_lang_asm.lib Require Import array.
 From AllSrc.allocator Require Import utils.
 
 (* Page allocator
-  - A lazy slab allocator
-  - TODO(Ben): segment index later?
-  - TODO(Ben): in_full is only set when it is moved from and to full list 
-      it is used in free function to check if we should move out of 
-      the full list or not, for now we do nothing with it.
-  
+    A lazy slab allocator
+    
   Design:
    |-------------------|
    |       next*       |  ~ intrusive not owned
@@ -102,16 +98,6 @@ Module PAlloc. Section PAlloc.
     freelist_free ("al" + #f_free) "bs" ;;
     freelist_free ("al" + #f_free_local) "bs" ;;
     #().
-
-  (*
-  Definition page_try_free : val := λ: "al" "l", 
-    page_free "al" "l" ;;
-    if: (!("al" + #f_res) = !("al" + #f_cap)) &&   
-        (!("al" + #f_free) = NONE) && 
-        (!("al" + #f_free_local) = NONE)
-    then page_dealloc "al" 
-    else #().
-  *)
 
   Local Definition freelist_extend : val := rec: "rec" "fl" "lb" "bs" "n" "c" :=
     if: "c" + #1 ≤ "n"

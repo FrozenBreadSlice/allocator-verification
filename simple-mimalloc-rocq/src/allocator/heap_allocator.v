@@ -4,8 +4,8 @@ From AllSrc.allocator Require Import page_allocator.
 From AllSrc.intrusive_list Require Import ilist.
 From AllSrc.allocator Require Import utils.
 From AllSrc.allocator Require Import heap_ghost_state.
+From AllSrc.iris_heap_lang_asm.lib Require Import unwrap.
 
-From AllSrc.iris_heap_lang_asm.lib Require Import diverge.
 (* Heap allocator
 
 *)
@@ -407,26 +407,28 @@ Module HAlloc. Section HAlloc.
       iApply "Hphi". iRight. by rewrite -app_assoc /=.
   Qed.
 
+  (* TODO(Ben): check NONEV case should not be necessary*)
   Lemma heap_alloc_hoare γ al n : 
     {{{ is_heap γ al }}} 
       heap_alloc #al #n
     {{{ vret, RET vret; 
-       (∃ l, ⌜vret = SOMEV #l⌝ ∗ 
+       (∃ l, ⌜vret = SOMEV #l⌝ ∗ ⌜n ≤ BLOCK_SIZE⌝ ∗
           ([∗ list] i ∈ seq 0 BLOCK_SIZE, ∃ v, (l + i)%Z ↦ v) ∗ 
-          is_valid_loc γ l al ∗ is_heap γ al)
-        ∨ 
-      ⌜vret = NONEV⌝ ∗ is_heap γ al 
+          is_valid_loc γ l al ∗ is_heap γ al) 
+      ∨
+      ⌜vret = NONEV⌝ ∗ ⌜BLOCK_SIZE < n⌝ ∗ is_heap γ al 
     }}}.
   Proof. 
     iIntros (φ) "(%Lq & %Lf & %res & %L & %Hr & %Hr2 & %Hdom & Hauth & Hil1 
     & Hil2 & Hp1 & Hp2) Hphi". 
     iUnfold heap_alloc. wp_pures. case_bool_decide.
-    { wp_pures. iApply "Hphi". iRight. by iFrame. } 
+    { wp_pures. iApply "Hphi". iRight. iFrame. iPureIntro. 
+      repeat split; [lia|..]; auto. } 
     wp_pures. 
     wp_apply (queue_alloc_hoare with "[Hauth Hil1 Hil2 Hp1 Hp2]"); 
     [by iFrame|]. iIntros (v) "[H | H]".
     { iDestruct "H" as "(%Lq' & %Ld & %Lf' & %l &->&->&->& Hl &Hlv & Hh)".
-      wp_pures. iApply "Hphi". iLeft. by iFrame. }
+      wp_pures. iApply "Hphi". iLeft. iFrame. iPureIntro. split; [done|lia]. }
     iDestruct "H" as "(-> & %res' & %L' & %Hr' & %Hr2' & %Hdom' & Hauth & 
     Hil1 & Hil2 & Hp1 & Hp2)". wp_pures. 
     wp_apply (PAlloc.page_new_alloc_hoare _ BLOCK_SIZE PAGE_ALIGN).
@@ -443,7 +445,7 @@ Module HAlloc. Section HAlloc.
     iIntros (v) "[H | (-> & %Hr_0 & (%a&%b&%c&%d&?& %Hr_not_0 &?))]"; [|lia].
     iDestruct "H" as "(%l & -> & Hfbs & Hun & Hvl & Hp)". wp_pures. 
     wp_store. wp_store. iApply "Hphi". iLeft. iExists l. 
-    iSplitR; [done|]. iSplitL "Hun"; [done|].
+    iSplitR; [done|]. iSplitR; [iPureIntro; lia|]. iSplitL "Hun"; [done|].
     iPoseProof (my_auth_my_frac_alloc with "Hauth") as "Hauth".
     iMod "Hauth" as "(Hauth & Hfrac)".
     iPoseProof (PAlloc.get_usefull_pure_facts with "Hp Hvl") 
@@ -480,34 +482,16 @@ Module HAlloc. Section HAlloc.
     [lia|set_solver].
   Qed.
  
-  Local Definition unsafe_unwrap: val := λ: "x",
-    match: "x" with 
-      SOME("v") => "v" 
-    | NONE => diverge #()
-    end.
-
-  Local Lemma unsafe_unwrap_hoare (v x : val) :
-    {{{ ⌜x = SOMEV v ∨ x = NONEV⌝ }}}
-      unsafe_unwrap x
-    {{{ RET v; ⌜x = NONEV → False⌝ }}}.
-  Proof.
-    iIntros (Φ) "%lx HY".
-    destruct lx; rewrite H; wp_lam; wp_pure; wp_pure.
-    * wp_pures. by iApply "HY".
-    * wp_pure. iLöb as "IH". wp_lam. by wp_apply "IH".
-  Qed.
-
   Local Definition test_program_heap : val := λ: "_", 
     let: "al" := heap_new_alloc #() in
-    let: "l1" := unsafe_unwrap (heap_alloc "al" #(BLOCK_SIZE - 1)%nat) in
-    let: "l2" := unsafe_unwrap (heap_alloc "al" #(BLOCK_SIZE - 3)%nat) in
+    let: "l1" := unwrap (heap_alloc "al" #(BLOCK_SIZE - 1)%nat) in
+    let: "l2" := unwrap (heap_alloc "al" #(BLOCK_SIZE - 3)%nat) in
     "l1" <- #1 ;;
     ("l1" + #1) <- #2 ;;
     "l2" <- #3 ;; 
     ("l2" + #1) <- #4 ;;
     heap_free "l1" ;;
     heap_free "l2". 
-    (*TODO(Ben): heap_dealloc "al".*)
   
   (* also breaking abstration with ghost stat here *)
   Local Lemma test_progam_heap_hoare :
@@ -519,17 +503,13 @@ Module HAlloc. Section HAlloc.
     wp_pures. wp_apply (heap_new_alloc_hoare); [done|].
     iIntros (al) "(%γ & Hp)". wp_pures.
     wp_apply (heap_alloc_hoare with "[Hp]"); [done|]. 
-    iIntros (v) "[(%l & -> & Hun & Hv & Hp)|(-> & H)]";
-    wp_apply unsafe_unwrap_hoare;
-    [iPureIntro; by left| 
-    |iPureIntro; by right|iIntros; by specialize (H eq_refl)].
-    iIntros. wp_pures.
+    iIntros (v) "[(%l & -> & _ & Hun & Hv & Hp)|(-> & %Hcontr & _)]"; 
+    [|unfold BLOCK_SIZE in *; lia].
+    wp_lam. wp_pures.
     wp_apply (heap_alloc_hoare with "Hp"). 
-    iIntros (v) "[(%l' & -> & Hun' & Hv' & Hp)|(-> & H)]"; 
-    wp_apply unsafe_unwrap_hoare;
-    [iPureIntro; by left| 
-    |iPureIntro; by right|iIntros; by specialize (H0 eq_refl)].
-    iIntros. wp_pures.
+    iIntros (v) "[(%l' & -> & _ & Hun' & Hv' & Hp)|(-> & %Hcontr & H)]"; 
+    [|unfold BLOCK_SIZE in *; lia].
+    wp_lam. wp_pures.
     iDestruct "Hun" as "((%v0 & Hl0) & (%v1 & Hl1) & Hun)".
     iDestruct "Hun'" as "((%v2 & Hl2) & (%v3 & Hl3) & Hun')".
     rewrite 2!Z.add_0_r.
@@ -540,8 +520,6 @@ Module HAlloc. Section HAlloc.
     wp_apply (heap_free_hoare with "[Hp Hl2 Hl3 Hun' Hv']").
     { iFrame. rewrite Z.add_0_r. auto. }
     iIntros "Hp". by iApply "Hphi".
-    (* TODO(Ben): dealloc *) 
-    Unshelve. exact #(). exact #().
   Qed.
 
 End HAlloc. End HAlloc.

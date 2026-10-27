@@ -12,12 +12,17 @@ Section seq.
     "start" <- "new".
 
   Definition pop : val := λ: "start",
-    let: "rem" := ! "start" in
-    "start" <- ! "rem" ;;
+    let: "rem" := !"start" in
+    "start" <- !"rem" ;;
     "rem".
 
   Definition next : val := λ: "start", 
     ! "start".
+
+  Definition swap : val := λ: "start1" "start2",
+    let: "l" := !"start1" in
+    "start1" <- !"start2" ;;
+    "start2" <- "l".
 
   Fixpoint pred (s: loc) (L: list loc) (e: loc) : iProp Σ :=
     match L with
@@ -136,7 +141,19 @@ Section seq.
     fold pred; by iFrame.
   Qed.
 
+  Lemma swap_spec {s1 s2 e1 e2 : loc} (L1 L2: list loc) : 
+    {{{ is_seq s1 L1 e1 ∗ is_seq s2 L2 e2 }}} 
+      swap #s1 #s2
+    {{{ RET #(); is_seq s1 L2 e2 ∗ is_seq s2 L1 e1 }}}.
+  Proof.
+    iIntros (φ) "(Hs1 & Hs2) Hphi". iUnfold swap. wp_pures.
+    destruct L1, L2; simpl; 
+    [|iDestruct "Hs2" as "(Hs2 & Hsl)"|iDestruct "Hs1" as "(Hs1 & Hsl)"|
+     iDestruct "Hs1" as "(Hs1 & Hsl)"; iDestruct "Hs2" as "(Hs2 & Hsl0)"];
+    wp_load; wp_load; wp_store; wp_store; iApply "Hphi"; by iFrame.
+  Qed.
+
 End seq.
 End Seq.
 
-Global Opaque Seq.pred Seq.new Seq.push Seq.pop Seq.next.
+Global Opaque Seq.pred Seq.new Seq.push Seq.pop Seq.next Seq.swap.

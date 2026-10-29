@@ -47,7 +47,6 @@ Section IList.
 
   Definition pop_back_hoare := DCycle.remove_1_spec.
 
-  (*should make a lemma that all locations are different in a DCycle..*)
   Lemma remove_hoare pl lr L1 L2 : 
     {{{ DCycle.pred pl (L1 ++ [lr] ++ L2) }}}
       remove #pl #lr 

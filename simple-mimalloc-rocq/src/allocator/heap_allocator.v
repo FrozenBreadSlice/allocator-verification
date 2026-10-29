@@ -133,7 +133,7 @@ Module HAlloc. Section HAlloc.
   Definition is_heap γ al : iProp Σ := 
     ∃ Lq Lf, is_heap_internal γ al Lq Lf.
 
-  Definition is_valid_loc γ (l al : loc) : iProp Σ := 
+  Definition is_valid_loc γ (l : loc) : iProp Σ := 
     let lmd := down_align l PAGE_ALIGN in 
     my_frac γ lmd ∗   
     PAlloc.is_valid_loc l lmd.
@@ -188,8 +188,8 @@ Module HAlloc. Section HAlloc.
 
   Local Lemma in_internal_lists γ al l Lq Lf : 
     is_heap_internal γ al Lq Lf -∗ 
-    is_valid_loc γ l al -∗ 
-    is_heap_internal γ al Lq Lf ∗ is_valid_loc γ l al ∗ 
+    is_valid_loc γ l -∗ 
+    is_heap_internal γ al Lq Lf ∗ is_valid_loc γ l ∗ 
     ⌜down_align l PAGE_ALIGN ∈ (Lq ++ Lf)⌝.
   Proof.
     iIntros "Hh Hvl".
@@ -230,7 +230,7 @@ Module HAlloc. Section HAlloc.
   Lemma heap_free_hoare γ l al : 
     {{{ 
       is_heap γ al ∗ ([∗ list] i ∈ seq 0 BLOCK_SIZE, ∃ v, (l + i)%Z ↦ v) ∗ 
-      is_valid_loc γ l al
+      is_valid_loc γ l
     }}}
       heap_free #l 
     {{{ RET #(); is_heap γ al }}}.
@@ -328,7 +328,7 @@ Module HAlloc. Section HAlloc.
       (∃ Lq' L Lf' l, ⌜vret = SOMEV #l⌝ ∗ 
         ⌜Lq = Lq' ++ L⌝ ∗ ⌜Lf' = L ++ Lf⌝ ∗
         ([∗ list] i ∈ seq 0 BLOCK_SIZE, ∃ v, (l + i)%Z ↦ v) ∗ 
-        is_valid_loc γ l al ∗
+        is_valid_loc γ l ∗
         is_heap_internal γ al Lq' Lf') 
       ∨
       (⌜vret = NONEV⌝ ∗ is_heap_internal γ al [] (Lq ++ Lf))
@@ -414,7 +414,7 @@ Module HAlloc. Section HAlloc.
     {{{ vret, RET vret; 
        (∃ l, ⌜vret = SOMEV #l⌝ ∗ ⌜n ≤ BLOCK_SIZE⌝ ∗
           ([∗ list] i ∈ seq 0 BLOCK_SIZE, ∃ v, (l + i)%Z ↦ v) ∗ 
-          is_valid_loc γ l al ∗ is_heap γ al) 
+          is_valid_loc γ l ∗ is_heap γ al) 
       ∨
       ⌜vret = NONEV⌝ ∗ ⌜BLOCK_SIZE < n⌝ ∗ is_heap γ al 
     }}}.

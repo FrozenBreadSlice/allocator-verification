@@ -56,10 +56,10 @@ void test3 () {
 }
 
 /* Test 4: allocate enough to ask for new page 
-    first page has 63 blocks (due to segment/page metadata)  
+    first page has 63 blocks (due to segment/page metadata) 
     so we will allocate 64 times  
     - since everything is freed before we should be able to allocate 10 times 
-        from fee list first, then 6 more times from last page extend
+        from freelist first, then 6 more times from last page extend
     - then we page extend from 16 -> 32 and 32 -> 63
     - on 64th allocation it will put the page into the full bin
         and if SM_N_PAGES_PER_SEGMENT == 1 
@@ -69,14 +69,16 @@ void test3 () {
 */
 void test4 () {
     SMDEBUG("----------TEST 4-----------\n")
+    SMASSERT(BLOCK_SIZES[sm_bin(700)] = 1024) //test assumption
     void *datas[64];
     for (int i = 0; i < 64; i++) {
-        datas[i] = sm_malloc(500);
+        datas[i] = sm_malloc(700);
     }
     for (int i = 0; i < 64; i++) {
         sm_free(datas[i]);
     }
     //if there is one page per segment, a new segment was allocated and put as global-heap.first
+    //if there are more pages per segment, than the first page capacity should be equal to reserved
     if (SM_N_PAGES_PER_SEGMENT == 1) {
         SMASSERT(global_heap.first->next->pages[0].capacity == global_heap.first->next->pages[0].reserved)
     } else {
@@ -105,8 +107,8 @@ i32 main () {
     test2();
     sm_reset();
     test3();
-    //sm_reset();
-    //test4(); //TODO(Ben): tests fails as if now
+    sm_reset();
+    test4(); 
     sm_reset();
     test5();
     return 0;

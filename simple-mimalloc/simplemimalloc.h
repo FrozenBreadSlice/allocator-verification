@@ -111,6 +111,10 @@ typedef struct sm_heap_t {
     sm_full_list_t full_list;
 } sm_heap_t;
 
+typedef void (sm_deferred_free_fun)(bool force, unsigned long long heartbeat, void *arg);
+
+void sm_register_deferred_free (sm_deferred_free_fun *fn, void *arg);
+
 sm_heap_t global_heap = {0};
 
 void *sm_malloc (size_t size);

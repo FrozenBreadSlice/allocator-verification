@@ -18,7 +18,7 @@ sm_segment_t *sm_page_to_segment (void *in_segment) {
 }
 
 size_t sm_os_page_size(void) {
-  static size_t page_size = 0;
+  local_persist size_t page_size = 0;
   if (page_size == 0) {
     long result = sysconf(_SC_PAGESIZE);
     page_size = (result > 0 ? (size_t)result : 4096);
@@ -219,7 +219,7 @@ void sm_page_to_class (sm_page_t *page_md) {
     sm_heap_t *heap = page_md->heap; 
 
     //calculate queue from heap and page
-    sm_page_queue_t *toq = &heap->page_qs[sm_bin(page_md->block_size)];    
+    sm_page_queue_t *toq = &heap->page_qs[sm_bin(page_md->block_size)]; 
     
     //remove from full_list add to toq 
     sm_full_list_remove(&heap->full_list, page_md); 
@@ -258,6 +258,21 @@ void sm_segment_init (sm_heap_t *heap, sm_segment_t *segment) {
 /*
     Heap
 */
+
+internal sm_deferred_free_fun *deferred_free = NULL; //implement this call back
+internal void *arg = NULL;
+
+void sm_deferred_free (sm_heap_t* heap, bool force) {
+    //heap->tld->heartbeat++; TODO(Ben): add heartbeat? what is exactly its purpose: i remember it is stated in paper!
+    if (deferred_free != NULL) {
+        deferred_free(force, 0, arg); //heap->tld->heartbeat);
+    }
+}
+
+void sm_register_deferred_free (sm_deferred_free_fun* fn, void *arg) {
+    deferred_free = fn;
+    arg = arg;
+}
 
 void *sm_heap_malloc (sm_heap_t *heap, size_t size) {
     u8 bin = sm_bin(size);
@@ -307,6 +322,8 @@ void *sm_heap_malloc (sm_heap_t *heap, size_t size) {
     if (!free_block) {
         SMDEBUG("Could not find block, looking for segments\n")
         //TODO(Ben): 1. do deffered freeing
+        
+        sm_deferred_free(heap, false);
 
         //NOTE: i believe in mimalloc 
         //  segments don't reclaim empty pages 

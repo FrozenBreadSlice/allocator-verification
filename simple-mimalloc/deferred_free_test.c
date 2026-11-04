@@ -100,6 +100,7 @@ void deferred_callback (bool force, unsigned long long heartbeat, void *arg) {
         Object *now = container_of(fq_pop_front(free_queue), node, Object);
         if (now->child1) fq_push_back(free_queue, &now->child1->node); 
         if (now->child2) fq_push_back(free_queue, &now->child2->node);
+        sm_free(now);
         i++;
     }
 

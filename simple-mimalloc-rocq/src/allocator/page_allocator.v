@@ -128,24 +128,24 @@ Module PAlloc. Section PAlloc.
     Representation
   *)
     
-  Definition is_valid_loc_internal l al bs res : iProp Σ := 
+  Definition is_valid_lock_pure l al bs res : iProp Σ := 
     ∃ ld i, ⌜ld = (al + MDSIZE)%Z⌝ ∗ ⌜l = (ld + (i * bs))%Z⌝ ∗ ⌜i < res⌝.
 
-  Global Instance is_valid_loc_internal_presist l al bs res : 
-    Persistent (is_valid_loc_internal l al bs res).
+  Global Instance is_valid_lock_pure_presist l al bs res : 
+    Persistent (is_valid_lock_pure l al bs res).
   Proof. apply _. Qed.
     
   Definition is_valid_loc l al : iProp Σ := 
     ∃ bs res, 
       (al + f_bs)%Z ↦{#free_frac res} #bs ∗ 
       (al + f_res)%Z ↦{#free_frac res} #res ∗ 
-      is_valid_loc_internal l al bs res.
+      is_valid_lock_pure l al bs res.
   
   Definition is_freelist fl al bs res size : iProp Σ := 
     ∃ L, ⌜length L = size⌝ ∗ ⌜NULL ∉ (fl::L)⌝ ∗ Seq.pred fl L NULL ∗ 
       [∗ list] l ∈ L, 
         ([∗ list] i ∈ seq 1 (bs - 1), ∃ v, (l + i)%Z ↦  v) ∗
-        is_valid_loc_internal l al bs res.
+        is_valid_lock_pure l al bs res.
     
   Definition is_page (al : loc) (bs res fbs : nat) : iProp Σ := 
     ∃ cap ld size1 size2 , 
@@ -201,7 +201,7 @@ Module PAlloc. Section PAlloc.
         ∨ 
       ∃ l s, ⌜vret = SOMEV #l⌝ ∗ ⌜S s = size⌝ ∗
         ([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v) ∗ 
-        is_valid_loc_internal l al bs res ∗ is_freelist fl al bs res s)
+        is_valid_lock_pure l al bs res ∗ is_freelist fl al bs res s)
     }}}. 
   Proof.
     iIntros (φ) "(%L & %Hlen & %Hnp & Hseq & HbL) Hphi". 
@@ -232,7 +232,7 @@ Module PAlloc. Section PAlloc.
     {{{ 
       ⌜0 < bs⌝ ∗ ⌜l ≠ NULL⌝ ∗ is_freelist fl al bs res size ∗ 
       (([∗ list] i ∈ seq 0 bs, ∃ v, (l + i)%Z ↦ v)) ∗ 
-      is_valid_loc_internal l al bs res
+      is_valid_lock_pure l al bs res
     }}}
       freelist_push #fl #l
     {{{ RET #(); is_freelist fl al bs res (size + 1) }}}.
@@ -251,7 +251,7 @@ Module PAlloc. Section PAlloc.
     {{{ ⌜0 < bs⌝ ∗ ⌜NULL ∉ L⌝ ∗ Seq.pred l L NULL ∗ 
         [∗ list] l ∈ (l::L), 
           ([∗ list] i ∈ seq 1 (bs - 1), ∃ v, (l + i)%Z ↦  v) ∗
-          is_valid_loc_internal l al bs res
+          is_valid_lock_pure l al bs res
     }}}
       freelist_free_rec #l #bs
     {{{ RET #(); emp }}}.
@@ -292,7 +292,7 @@ Module PAlloc. Section PAlloc.
 
   Local Lemma valid_loc_not_null  l al bs res : 
     (0 < al)%Z → 
-    is_valid_loc_internal l al bs res ⊢ ⌜l ≠ NULL⌝.
+    is_valid_lock_pure l al bs res ⊢ ⌜l ≠ NULL⌝.
   Proof.
     iIntros (Hal) "(%ld & %i & %Hld & %Hl & %Hi)". iPureIntro. rewrite /NULL. lia.
   Qed.
@@ -590,7 +590,7 @@ Module PAlloc. Section PAlloc.
   Lemma get_usefull_pure_facts al bs res fbs l : 
     PAlloc.is_page al bs res fbs -∗ 
     PAlloc.is_valid_loc l al -∗ 
-    PAlloc.is_valid_loc_internal l al bs res ∗ ⌜(0 < al)%Z⌝ ∗ ⌜(0 < res)⌝.
+    PAlloc.is_valid_lock_pure l al bs res ∗ ⌜(0 < al)%Z⌝ ∗ ⌜(0 < res)⌝.
   Proof.
     iIntros "(%cap & %ld & %b1 & %b2 & %Hal & %Hr & %Hbs & %Hcr & -> & 
     %Hfbs & Hcap & Hres & Hbs & Hfl & Hfl2 & Hun) (%bs' & %res' & Hbs' & Hres'

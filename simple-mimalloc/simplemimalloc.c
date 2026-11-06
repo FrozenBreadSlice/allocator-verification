@@ -323,6 +323,7 @@ void *sm_heap_malloc (sm_heap_t *heap, size_t size) {
         SMDEBUG("Could not find block, looking for segments\n")
         //TODO(Ben): 1. do deffered freeing
         
+        //TODO(Ben): need to try above again or basically: see if you can queue alloc  
         sm_deferred_free(heap, false);
 
         //NOTE: i believe in mimalloc 

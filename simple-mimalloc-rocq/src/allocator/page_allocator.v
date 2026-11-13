@@ -47,7 +47,6 @@ Module PAlloc. Section PAlloc.
   Definition f_free_local : nat := 8.
 
   Definition MDSIZE : nat := 9. 
-  Definition NULL : loc := 0.
 
   (* 
     function definitions 

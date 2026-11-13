@@ -1,6 +1,8 @@
 From AllSrc.iris_heap_lang_asm Require Import lang notation proofmode.
 
 (* definitions *)
+Definition NULL : loc := 0.
+
 Definition down_align (l : loc) (a : Z) : loc := (l `quot` a * a)%Z.
 
 (* TODO(Ben): support for nat -> Qp *)

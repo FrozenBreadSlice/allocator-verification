@@ -88,7 +88,7 @@ Local Definition pointsto_aux : seal (@pointsto_def). Proof. by eexists. Qed.
 Definition pointsto := pointsto_aux.(unseal).
 Local Definition pointsto_unseal :
   @pointsto = @pointsto_def := pointsto_aux.(seal_eq).
-Global Arguments pointsto {hlc Σ _}.
+Global Arguments pointsto {hlc Σ _} _%_Z.
 
 Notation "l ↦ dq v" := (pointsto l dq v)
   (at level 20, dq custom dfrac at level 1, format "l  ↦ dq  v") : bi_scope.

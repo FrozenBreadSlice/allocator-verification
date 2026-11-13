@@ -26,6 +26,8 @@ Section IList.
 
   Definition pop_back := DCycle.remove_1.
       
+  Definition new_hoare := DCycle.new_spec. 
+
   Definition is_empty_hoare := DCycle.is_empty_spec.
 
   Definition prev_hoare := DCycle.prev_spec.

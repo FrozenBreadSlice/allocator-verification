@@ -3,7 +3,7 @@ From AllSrc.iris_heap_lang_asm.lib Require Import assert.
 From AllSrc.allocator Require Import page_allocator.
 From AllSrc.intrusive_list Require Import ilist.
 From AllSrc.allocator Require Import utils.
-From AllSrc.allocator Require Import heap_ghost_state.
+From AllSrc.allocator Require Export heap_ghost_state.
 From AllSrc.iris_heap_lang_asm.lib Require Import unwrap.
 
 (* Heap allocator
@@ -69,12 +69,12 @@ Module HAlloc. Section HAlloc.
       | SOME "lp" => 
         IList.push_front ("heap" + #f_queue) "lp" ;;
         ("lp" + #f_in_full) <- #false ;;
-        PAlloc.page_free "lmd" "l" ;; #()
+        PAlloc.page_free "lmd" "l"
       end
     else  
-      PAlloc.page_free "lmd" "l";; #(). 
-  (* TODO(Ben): can we remove this and still get fancy update?*)
+      PAlloc.page_free "lmd" "l". 
 
+  (* fast path *)
   Definition queue_alloc : val := rec: "rec" "bsq" "full" := 
     if: IList.is_empty "bsq" then NONE 
     else 
@@ -88,6 +88,16 @@ Module HAlloc. Section HAlloc.
       | SOME "l" => SOME "l"
       end.
 
+  (* slow path *)
+  Definition alloc_new_page : val := λ: "bsq" "al",
+    let: "res" := #(Z.to_nat (PAGE_ALIGN `quot` BLOCK_SIZE - 1)) in
+    let: "lp" := PAlloc.page_new_alloc "res" #BLOCK_SIZE #PAGE_ALIGN in 
+    IList.push_front "bsq" "lp" ;;
+    let: "l" := PAlloc.page_alloc "lp" in 
+    ("lp" + #f_in_full) <- #false ;;
+    ("lp" + #f_heap) <- "al" ;;
+    "l".
+
   Definition heap_alloc : val := λ: "al" "n", 
     if: #BLOCK_SIZE < "n" then NONE 
     else
@@ -95,22 +105,17 @@ Module HAlloc. Section HAlloc.
       let: "full" := ("al" + #f_full) in 
       match: queue_alloc "bsq" "full" with 
         NONE => 
-          (* new: call callback *)
-          let: "callback" := ("al" + #f_callback) in 
-          "callback" #() ;; (*callback has captured al and user queue*)
-          match: queue_alloc "bsq" "full" with 
-            (* end new *)
-            NONE => 
-              let: "res" := #(Z.to_nat (PAGE_ALIGN `quot` BLOCK_SIZE - 1)) in
-              let: "lp" := 
-                PAlloc.page_new_alloc "res" #BLOCK_SIZE #PAGE_ALIGN in 
-              IList.push_front "bsq" "lp" ;;
-              let: "l" := PAlloc.page_alloc "lp" in 
-              ("lp" + #f_in_full) <- #false ;;
-              ("lp" + #f_heap) <- "al" ;;
-              "l"
-          | SOME "l" => SOME "l"
-          end
+          match: !("al" + #f_callback) with 
+            NONE     => 
+              alloc_new_page "bsq" "al"
+          | SOME "f" => 
+              "f" #() ;; 
+              match: queue_alloc "bsq" "full" with 
+                NONE     => 
+                  alloc_new_page "bsq" "al"
+              | SOME "l" => SOME "l"
+              end
+          end 
       | SOME "l" => SOME "l"
       end.
 
@@ -133,7 +138,7 @@ Module HAlloc. Section HAlloc.
         ∃ f, ⌜cb = SOMEV f⌝ ∗ 
         (* contracive solver doesn't like this? another unfold? *)
         (*▷ ({{{ P }}} f #() {{{ RET #(); P }}})*)
-        ▷ (P -∗ WP (f #()) {{ v, ⌜v = #()⌝ ∗ P }})) ∗
+        ▷ (□ (P -∗ WP (f #()) {{ v, ⌜v = #()⌝ ∗ P }}))) ∗
       my_auth γ L ∗ 
       IList.is_ilist (al + f_queue)%Z Lq ∗ 
       IList.is_ilist (al + f_full)%Z Lf ∗
@@ -259,8 +264,8 @@ Module HAlloc. Section HAlloc.
     replace (Z.to_nat (2%nat * 2%nat + 1)) with (2 + 2 + 1) by lia.
     rewrite !replicate_add !array_app !length_replicate array_singleton.
     iDestruct "Hl" as "([H1 H2] & H3)". simpl.
-    wp_apply (DCycle.new_spec with "[H1]"); [by rewrite Z.add_0_r|].
-    iIntros "Hq". wp_pures. wp_apply (DCycle.new_spec with "H2"). 
+    wp_apply (IList.new_hoare with "[H1]"); [by rewrite Z.add_0_r|].
+    iIntros "Hq". wp_pures. wp_apply (IList.new_hoare with "H2"). 
     iIntros "Hf". wp_pures. iApply "Hphi". 
     iPoseProof (my_auth_unit) as "H". iMod "H" as (γ) "Hauth". 
     iExists γ. iApply is_heap_unfold. 
@@ -287,6 +292,7 @@ Module HAlloc. Section HAlloc.
     Hauth & Hil1 & Hil2 & Hp1 & Hp2)".
     wp_store. iApply "Hphi". iUnfold is_heap. iApply is_heap_unfold.
     iFrame. iRight. iExists #f. iSplitR; [done|]. iModIntro. iNext.
+    iDestruct "H" as "#H". iModIntro.
     iIntros "Hh". iApply ("H" with "Hh"). iNext. auto.
   Qed.
  
@@ -323,10 +329,11 @@ Module HAlloc. Section HAlloc.
     - iPoseProof (IList.pred_unique with "Hil1") as "(Hil1 & %Hd)".
       apply NoDup_cons in Hd as [Hd1 Hd2].
       destruct (list_elem_of_split _ _ H0) as (L1 & L2 & HLq). rewrite HLq. 
-      iPoseProof ((big_sepL_get_middle _ L1 L2 lmd) with "Hp1") 
+      iDestruct (big_sepL_get_middle _ L1 L2 lmd with "Hp1") 
       as "((%fbs & %Hm & Hfracp & %Ha & Hp & Hif & Hh) & Hp1)". wp_load. 
-      wp_pures. wp_apply (PAlloc.page_free_hoare with "[Hp Hun Hvl]"); [iFrame|].
-      iIntros "Hp". wp_pures. iApply "Hphi". 
+      wp_pures. iApply wp_fupd. 
+      wp_apply (PAlloc.page_free_hoare with "[Hp Hun Hvl]"); [iFrame|].
+      iIntros "Hp". iApply "Hphi". 
       iApply is_heap_unfold. iExists Lq, Lf, cb, res.
       destruct (decide (lmd ∈ Lf)). (* this gets us lmd ∉ Lf, needed later *)
       { iPoseProof (IList.pred_unique_cycle with "[Hil1 Hil2]") as "%H'"; 
@@ -370,9 +377,9 @@ Module HAlloc. Section HAlloc.
     wp_apply (IList.remove_hoare with "[Hil2]"); [by rewrite Z.add_0_r|].
     iIntros "(Hlmdl & Hil2)". wp_pures.
     wp_apply (IList.push_front_hoare with "[Hlmdl Hil1]"); [iFrame|].
-    iIntros "Hil1". rewrite !Z.add_0_r. wp_store. 
+    iIntros "Hil1". rewrite !Z.add_0_r. wp_store. iApply wp_fupd.
     wp_apply (PAlloc.page_free_hoare with "[Hp Hun Hvl]"); [iFrame|].
-    iIntros "Hp". wp_pures. iApply "Hphi". 
+    iIntros "Hp". iApply "Hphi". 
     iApply is_heap_unfold. iExists (lmd::Lq), (L1 ++ L2), cb, res.
     destruct (decide (res < S (fbs))).
     { by iPoseProof (PAlloc.page_res_geq_fbs with "Hp") as "Hcon". }
@@ -495,6 +502,37 @@ Module HAlloc. Section HAlloc.
       iApply "Hphi". iRight. by rewrite -app_assoc /=.
   Qed.
 
+  Lemma alloc_new_page_hoare al lq L res : 
+    res = Z.to_nat (PAGE_ALIGN `quot` BLOCK_SIZE - 1) → 
+    {{{ IList.is_ilist lq L }}}
+      alloc_new_page #lq #al 
+    {{{ l, RET (SOMEV #l); ∃ lp, 
+        IList.is_ilist lq (lp :: L) ∗ 
+        PAlloc.is_page lp BLOCK_SIZE res (res - 1) ∗ 
+        ⌜(PAGE_ALIGN | lp)%Z⌝ ∗
+        (lp + f_in_full)%Z ↦ #false ∗
+        (lp + f_heap)%Z ↦ #al ∗
+        ([∗ list] i ∈ seq 0 BLOCK_SIZE, ∃ v, (l + i)%Z ↦ v) ∗ 
+        PAlloc.is_valid_loc l lp
+    }}}.
+  Proof. 
+    iIntros (Hr φ) "Hlq Hphi". iUnfold alloc_new_page. wp_pures.
+    wp_apply (PAlloc.page_new_alloc_hoare _ BLOCK_SIZE PAGE_ALIGN).
+    { iPureIntro. rewrite /BLOCK_SIZE /PAGE_ALIGN. 
+      split; [|lia]. replace (Z.of_nat 128) with (8 * 16)%Z by lia. 
+      rewrite Z.quot_mul; lia. }
+    iIntros (lp) "(Hp & Hf & %Halp)". rewrite !array_cons.
+    iDestruct "Hf" as "(Hf1 & Hf2 & Hinf & Hheap & _)". 
+    rewrite <-2Z.add_assoc. wp_pures.
+    wp_apply (IList.push_front_hoare with "[Hlq Hf1 Hf2]"); 
+    [iFrame; by rewrite array_nil|]. iIntros "Hil1". wp_pures. 
+    wp_apply (PAlloc.page_alloc_hoare with "[Hp]"); [done|].
+    (* in right branch contradiction res = 0 ∧ res > 0 *)
+    iIntros (v) "[H | (-> & %Hr_0 & (%a&%b&%c&%d&?& %Hr_not_0 &?))]"; [|lia].
+    iDestruct "H" as "(%l & -> & Hfbs & Hun & Hvl & Hp)". wp_pures. 
+    wp_store. wp_store. iApply "Hphi". rewrite Hr. by iFrame.   
+  Qed.
+
   Lemma heap_alloc_hoare γ al n : 
     {{{ is_heap γ al }}} 
       heap_alloc #al #n
@@ -508,7 +546,7 @@ Module HAlloc. Section HAlloc.
   Proof. 
     iIntros (φ) "Hh Hphi". iUnfold heap_alloc. 
     iPoseProof (is_heap_unfold with "Hh") as (Lq Lf cb res L) 
-    "(%Hr & %Hr2 & %Hdom & Hcb & Hcb2 & Hauth & Hil1 & Hil2 & Hp1 & Hp2)".
+    "(%Hr & %Hr' & %Hdom & Hcb & Hcb2 & Hauth & Hil1 & Hil2 & Hp1 & Hp2)".
     wp_pures. case_bool_decide.
     { wp_pures. iApply "Hphi". iRight. iSplitR; [done|]. 
       iSplitR; [iPureIntro; lia|]. iApply is_heap_unfold. iFrame. 
@@ -519,101 +557,120 @@ Module HAlloc. Section HAlloc.
     { iFrame. repeat (iSplitR; [done|]). 
       iDestruct "Hcb2" as "[-> | (%f & -> & H)]"; auto. }
     iIntros (v) "[H | H]".
-    { iDestruct "H" as "(%Lq' & %Ld & %Lf' & %l &->&->&->& Hl &Hlv & Hh)".
+    { iDestruct "H" as "(%Lq1 & %Ld & %Lf1 & %l &->&->&->& Hl &Hlv & Hh)".
       wp_pures. iApply "Hphi". iLeft. iFrame. iSplitR; [done|]. 
-      iSplitR; [iPureIntro; lia|]. iApply is_heap_unfold. 
-      (* TODO(Ben): super annoying i think only laters *). }
-    iDestruct "H" as "(-> & %res' & %L' & %Hr' & %Hr2' & %Hdom' & Hauth & 
-    Hil1 & Hil2 & Hp1 & Hp2)". wp_pures. 
-    wp_apply (PAlloc.page_new_alloc_hoare _ BLOCK_SIZE PAGE_ALIGN).
-    { iPureIntro. rewrite /BLOCK_SIZE /PAGE_ALIGN. 
-      split; [|lia]. replace (Z.of_nat 128) with (8 * 16)%Z by lia. 
-      rewrite Z.quot_mul; lia. }
-    iIntros (lp) "(Hp & Hf & %Halp)". rewrite !array_cons.
-    iDestruct "Hf" as "(Hf1 & Hf2 & Hinf & Hheap & _)". 
-    rewrite <-2Z.add_assoc. wp_pures.
-    wp_apply (IList.push_front_hoare with "[Hil1 Hf1 Hf2]"); 
-    [iFrame; by rewrite array_nil|]. iIntros "Hil1". wp_pures. 
-    wp_apply (PAlloc.page_alloc_hoare with "[Hp]"); [done|].
-    (* in right branch contradiction res = 0 ∧ res > 0 *)
-    iIntros (v) "[H | (-> & %Hr_0 & (%a&%b&%c&%d&?& %Hr_not_0 &?))]"; [|lia].
-    iDestruct "H" as "(%l & -> & Hfbs & Hun & Hvl & Hp)". wp_pures. 
-    wp_store. wp_store. iApply "Hphi". iLeft. iExists l. 
+      iSplitR; [iPureIntro; lia|]. iApply is_heap_unfold.
+      (* TODO(Ben): super annoying i think only laters, better way?*)
+      iUnfold is_heap_pre, is_heap_internal_pre. 
+      iDestruct "Hh" as (res' L') "(%Hr1 & %Hr'1 & %Hdom1 & Hcb & Hcb2 & 
+      Hauth & Hil1 & Hil2 & Hp1 & Hp2)".
+      iFrame. repeat (iSplitR; [done|]).
+      iDestruct "Hcb2" as "[-> | (%f & -> & H)]"; auto. }
+    iDestruct "H" as "(-> & %res2 & %L2 & %Hr2 & %Hr'2 & %Hdom2 & Hcb & 
+    Hcb2 & Hauth & Hil1 & Hil2 & Hp1 & Hp2)". wp_pures. 
+    iDestruct "Hcb2" as "[-> | (%f & -> & Hwp)]"; wp_load; wp_pures.
+    { iApply wp_fupd. 
+      wp_apply (alloc_new_page_hoare with "Hil1"); [apply Hr'|..].
+      iIntros (l) "(%lp & Hil1 & Hlp & %Hal & Hinf & Hh & Hun & Hvl)". 
+      iApply "Hphi". iLeft. iExists l. 
+      iSplitR; [done|]. iSplitR; [iPureIntro; lia|]. iSplitL "Hun"; [done|].
+      iPoseProof (my_auth_my_frac_alloc with "Hauth") as "Hauth".
+      iMod "Hauth" as "(Hauth & Hfrac)".
+      iPoseProof (PAlloc.get_usefull_pure_facts with "Hlp Hvl") 
+      as "((%ld & %i & %Hld & %Hl & %Hi) & %Hlp' & %Hr0)".
+      assert (down_align l PAGE_ALIGN = lp) as Hlp.
+      { apply (down_align_location l lp i); [lia|done|done|lia|lia]. }
+      iSplitL "Hfrac Hvl"; [iFrame; by rewrite Hlp|].
+      destruct (decide (lp ∈ (Lq ++ Lf))). 
+      { iPoseProof (IList.pred_unique_cycle with "[Hil1 Hil2]") as "%H'"; 
+        [apply e| |iFrame|done]. by rewrite list_elem_of_singleton.  }
+      rewrite Hlp. simpl in Hdom2. iApply is_heap_unfold.
+      iExists [lp], (Lq ++ Lf), NONEV, res, (L2 ⊎ (2 *: {[+ lp +]})). 
+      iPoseProof ((my_auth_my_frac_alloc _ _ lp) with "Hauth") as "Hauth".
+      iMod "Hauth" as "(Hauth & Hfrac)".
+      iFrame. iSplitR; [done|]. iSplitR; [done|].
+      assert (({[+ lp; lp +]} : gmultiset loc) = 2 *: {[+ lp +]}) as Hmlp
+      by multiset_solver. iSplitR. 
+      { iPureIntro. apply set_eq. intros. rewrite -Hmlp. set_solver. }
+      iSplitR; [by iLeft|].
+      iSplitL "Hauth"; [by rewrite -Hmlp gmultiset_disj_union_assoc|].
+      iSplitR "Hp2".
+      { iPureIntro. split; [|done]. assert (lp ∉ L2) by set_solver.
+        assert (multiplicity lp L2 = 0) as HmL'; 
+        [by apply not_elem_of_multiplicity|].
+        rewrite multiplicity_disj_union HmL' /= multiplicity_scalar_mul 
+        multiplicity_singleton_eq. lia. }
+      iApply big_sepL_mono; [|done]. 
+      iIntros (k y Hl') "(%fbs & %Hmult & Ha & Hp & Hf & Hh)". 
+      simplify_eq. iFrame. iPureIntro.
+      apply list_elem_of_lookup_2 in Hl'. 
+      rewrite multiplicity_disj_union.
+      rewrite multiplicity_scalar_mul multiplicity_singleton_ne; 
+      [lia|set_solver]. }
+    iDestruct "Hwp" as "#Hwp".
+    iAssert ((is_heap γ al)%I) with "[Hcb Hauth Hil1 Hil2 Hp1 Hp2]" as "Hh".
+    { iApply is_heap_unfold. iFrame. repeat (iSplitR; [done|]).
+      iRight. iExists _. iSplitR; [done|]. iNext. by iModIntro. }
+    iSpecialize ("Hwp" with "Hh"). 
+    wp_apply (wp_wand with "Hwp") as (v) "[-> Hh]". wp_pures.
+    (* repetition, mostly from first queue_alloc_hoare application/ 
+      beginning of proof*)
+    iPoseProof (is_heap_unfold with "Hh") as (Lq3 Lf3 cb3 res3 L3) 
+    "(%Hr3 & %Hr'3 & %Hdom3 & Hcb & Hcb2 & Hauth & Hil1 & Hil2 & 
+    Hp1 & Hp2)".
+    wp_apply (queue_alloc_hoare with "[Hauth Hil1 Hil2 Hp1 Hp2 Hcb Hcb2]"). 
+    { iFrame. by repeat (iSplitR; [done|]). }
+    iIntros (v) "[H | H]".
+    { iDestruct "H" as "(%Lq4 & %Ld4 & %Lf4 & %l &->&->&->& Hl &Hlv & Hh)".
+      wp_pures. iApply "Hphi". iLeft. iFrame. iSplitR; [done|]. 
+      iSplitR; [iPureIntro; lia|]. iApply is_heap_unfold.
+      (* TODO(Ben): super annoying i think only laters, better way?*)
+      iUnfold is_heap_pre, is_heap_internal_pre. 
+      iDestruct "Hh" as (res' L') "(%Hr5 & %Hr'5 & %Hdom5 & Hcb & Hcb2 & 
+      Hauth & Hil1 & Hil2 & Hp1 & Hp2)".
+      iFrame. repeat (iSplitR; [done|]).
+      iDestruct "Hcb2" as "[-> | (%f5 & -> & H)]"; auto. }
+    iDestruct "H" as "(-> & %res6 & %L6 & %Hr6 & %Hr'6 & %Hdom6 & Hcb & 
+    Hcb2 & Hauth & Hil1 & Hil2 & Hp1 & Hp2)". wp_pures. 
+    iApply wp_fupd. 
+    wp_apply (alloc_new_page_hoare with "Hil1"); [apply Hr'|..].
+    iIntros (l) "(%lp & Hil1 & Hlp & %Hal & Hinf & Hh & Hun & Hvl)". 
+    iApply "Hphi". iLeft. iExists l. 
     iSplitR; [done|]. iSplitR; [iPureIntro; lia|]. iSplitL "Hun"; [done|].
     iPoseProof (my_auth_my_frac_alloc with "Hauth") as "Hauth".
     iMod "Hauth" as "(Hauth & Hfrac)".
-    iPoseProof (PAlloc.get_usefull_pure_facts with "Hp Hvl") 
+    iPoseProof (PAlloc.get_usefull_pure_facts with "Hlp Hvl") 
     as "((%ld & %i & %Hld & %Hl & %Hi) & %Hlp' & %Hr0)".
     assert (down_align l PAGE_ALIGN = lp) as Hlp.
-    { apply (down_align_location l lp i); [lia|done|done|done|lia]. }
-    iSplitL "Hfrac Hvl".
-    { iFrame. by rewrite Hlp. } 
-    destruct (decide (lp ∈ (Lq ++ Lf))). 
+    { apply (down_align_location l lp i); [lia|done|done|lia|lia]. }
+    iSplitL "Hfrac Hvl"; [iFrame; by rewrite Hlp|].
+    destruct (decide (lp ∈ (Lq3 ++ Lf3))). 
     { iPoseProof (IList.pred_unique_cycle with "[Hil1 Hil2]") as "%H'"; 
       [apply e| |iFrame|done]. by rewrite list_elem_of_singleton.  }
-    rewrite Hlp. simpl in Hdom'.
-    iExists [lp], (Lq ++ Lf), res, (L' ⊎ (2 *: {[+ lp +]})). 
+    rewrite Hlp. simpl in Hdom2. iApply is_heap_unfold.
+    iExists [lp], (Lq3 ++ Lf3), cb3, res, (L6 ⊎ (2 *: {[+ lp +]})). 
     iPoseProof ((my_auth_my_frac_alloc _ _ lp) with "Hauth") as "Hauth".
     iMod "Hauth" as "(Hauth & Hfrac)".
     iFrame. iSplitR; [done|]. iSplitR; [done|].
     assert (({[+ lp; lp +]} : gmultiset loc) = 2 *: {[+ lp +]}) as Hmlp
-    by multiset_solver.
-    iSplitR. 
+    by multiset_solver. iSplitR. 
     { iPureIntro. apply set_eq. intros. rewrite -Hmlp. set_solver. }
-    iSplitL "Hauth"; [by rewrite -Hmlp gmultiset_disj_union_assoc|]. 
-    rewrite -Hr2. iSplitR "Hp2".
-    { iExists (res - 1). (*TODO(Ben): add fraction?*) iFrame "Hp". 
-      iSplitR; [|done]. iPureIntro. assert (lp ∉ L') by set_solver.
-      assert (multiplicity lp L' = 0) as HmL'; 
+    iSplitL "Hcb2".
+    { iDestruct "Hcb2" as "[-> | (%f5 & -> & H)]"; auto. }
+    iSplitL "Hauth"; [by rewrite -Hmlp gmultiset_disj_union_assoc|].
+    iSplitR "Hp2".
+    { iPureIntro. split; [|done]. assert (lp ∉ L6) by set_solver.
+      assert (multiplicity lp L6 = 0) as HmL'; 
       [by apply not_elem_of_multiplicity|].
       rewrite multiplicity_disj_union HmL' /= multiplicity_scalar_mul 
       multiplicity_singleton_eq. lia. }
-    iApply big_sepL_mono; [|done]. iIntros (k y Hl') "(%fbs & %Hmult & Ha & 
-    Hp & Hf & Hh)". simplify_eq. iFrame. iPureIntro.
+    iApply big_sepL_mono; [|done]. 
+    iIntros (k y Hl') "(%fbs & %Hmult & Ha & Hp & Hf & Hh)". 
+    simplify_eq. iFrame. iPureIntro.
     apply list_elem_of_lookup_2 in Hl'. 
     rewrite multiplicity_disj_union.
     rewrite multiplicity_scalar_mul multiplicity_singleton_ne; 
     [lia|set_solver].
   Qed.
- 
-  Local Definition test_program_heap : val := λ: "_", 
-    let: "al" := heap_new_alloc #() in
-    let: "l1" := unwrap (heap_alloc "al" #(BLOCK_SIZE - 1)%nat) in
-    let: "l2" := unwrap (heap_alloc "al" #(BLOCK_SIZE - 3)%nat) in
-    "l1" <- #1 ;;
-    ("l1" + #1) <- #2 ;;
-    "l2" <- #3 ;; 
-    ("l2" + #1) <- #4 ;;
-    heap_free "l1" ;;
-    heap_free "l2". 
   
-  (* also breaking abstration with ghost stat here *)
-  Local Lemma test_progam_heap_hoare :
-    {{{ emp }}} 
-      test_program_heap #() 
-    {{{ RET #(); emp }}}.
-  Proof. 
-    iIntros (φ) "_ Hphi". iUnfold test_program_heap.
-    wp_pures. wp_apply (heap_new_alloc_hoare); [done|].
-    iIntros (al) "(%γ & Hp)". wp_pures.
-    wp_apply (heap_alloc_hoare with "[Hp]"); [done|]. 
-    iIntros (v) "[(%l & -> & _ & Hun & Hv & Hp)|(-> & %Hcontr & _)]"; 
-    [|unfold BLOCK_SIZE in *; lia].
-    wp_lam. wp_pures.
-    wp_apply (heap_alloc_hoare with "Hp"). 
-    iIntros (v) "[(%l' & -> & _ & Hun' & Hv' & Hp)|(-> & %Hcontr & H)]"; 
-    [|unfold BLOCK_SIZE in *; lia].
-    wp_lam. wp_pures.
-    iDestruct "Hun" as "((%v0 & Hl0) & (%v1 & Hl1) & Hun)".
-    iDestruct "Hun'" as "((%v2 & Hl2) & (%v3 & Hl3) & Hun')".
-    rewrite 2!Z.add_0_r.
-    wp_store. wp_store. wp_store. wp_store. 
-    wp_apply (heap_free_hoare with "[Hp Hl0 Hl1 Hun Hv]").
-    { iFrame. rewrite Z.add_0_r. auto. }
-    iIntros "Hp". wp_pures.
-    wp_apply (heap_free_hoare with "[Hp Hl2 Hl3 Hun' Hv']").
-    { iFrame. rewrite Z.add_0_r. auto. }
-    iIntros "Hp". by iApply "Hphi".
-  Qed.
-
 End HAlloc. End HAlloc.

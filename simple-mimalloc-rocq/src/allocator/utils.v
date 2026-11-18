@@ -1,11 +1,7 @@
 From AllSrc.iris_heap_lang_asm Require Import lang notation proofmode.
 
-(* definitions *)
-Definition NULL : loc := 0.
-
 Definition down_align (l : loc) (a : Z) : loc := (l `quot` a * a)%Z.
 
-(* TODO(Ben): support for nat -> Qp *)
 Definition free_frac res : Qp := 1 / pos_to_Qp (Pos.succ (Pos.of_nat res)).
 Definition page_frac fbs res : Qp := pos_to_Qp (Pos.of_nat (S fbs)) * free_frac res.
 
@@ -90,7 +86,7 @@ Section Utils.
     rewrite -fmap_S_seq big_sepL_fmap. 
     setoid_rewrite Nat2Z.inj_succ. setoid_rewrite <-Z.add_1_l.
     setoid_rewrite Z.add_assoc. 
-    iPoseProof (IH with "Hr") as "(%vs & %Hl & Hr)".
+    iDestruct (IH with "Hr") as "(%vs & %Hl & Hr)".
     iExists (v::vs). iSplitR.
     { iPureIntro. simpl. lia. }
     simpl. rewrite Z.add_0_r.  setoid_rewrite Nat2Z.inj_succ. 
@@ -162,5 +158,14 @@ Section Utils.
   Lemma inject_litint_nat (n m : nat) : 
     #n = #m → n = m.
   Proof. intros. inversion H. by apply Nat2Z.inj. Qed. 
+
+  Lemma array_not_null l n v : 
+    0 < n →
+    l ↦∗ replicate n v ⊢ ⌜l ≠ NULL⌝.
+  Proof. 
+    iIntros (H) "H". destruct n; [lia|].
+    simpl. iDestruct (array_cons with "H") as "[Hl H]".
+    by iDestruct (pointsto_not_null with "Hl") as "%Hnp". 
+  Qed.
 
 End Utils.

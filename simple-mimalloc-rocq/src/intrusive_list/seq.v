@@ -52,22 +52,14 @@ Section seq.
     is_seq s (L ++ s :: R) e ⊢ False.
   Proof.
     iIntros "H". destruct L.
-    - simpl. destruct R; simpl.
-      + iDestruct "H" as "(H1 & H2)".
-        iCombine "H1" "H2" gives %[H1 H2].
-        auto.
-      + iDestruct "H" as "(H1 & H2 & H3)".
-        iCombine "H1" "H2" gives %[H1 H2].
-        auto.
-    - iAssert (is_seq s (l :: L) s ∗ is_seq s R e)%I with "[H]" as "H".
-      + by iApply split.
-      + destruct R; simpl.
-        * iDestruct "H" as "((H1 & H2) & H3)".
-          iCombine "H1" "H3" gives %[H1 H2].
-          auto.
-        * iDestruct "H" as "((H1 & H2) & H3 & H4)".
-          iCombine "H1" "H3" gives %[H1 H2].
-          auto.
+    - destruct R; simpl; 
+      iDestruct "H" as "(H1 & H2)";
+      [|iDestruct "H2" as "[H2 H3]"];
+      iCombine "H1" "H2" gives %[H1 H2]; auto.
+    - rewrite split. destruct R; simpl;
+      iDestruct "H" as "((H1 & H2) & H3)";
+      [|iDestruct "H3" as "[H3 H4]"]; 
+      iCombine "H1" "H3" gives %[H1 H2]; auto.
   Qed.
 
   Lemma pred_start_unique_elem_of {s e : loc} (L : list loc) :
@@ -80,6 +72,7 @@ Section seq.
     by iApply pred_start_unique. 
   Qed.
 
+  (* TODO(Ben): can omit is_seq on right side since right is then pure.. *)
   Lemma pred_list_unique {s e : loc} (L : list loc) : 
     is_seq s L e ⊢ is_seq s L e ∗ ⌜NoDup L⌝. 
   Proof.
@@ -87,34 +80,58 @@ Section seq.
     { iFrame. iPureIntro. by apply NoDup_nil. }
     iDestruct "H" as "(Hs & His)". iSpecialize ("IH" with "His").
     destruct (decide (x ∈ L)).
-    - iPoseProof (pred_start_unique_elem_of) as "H"; [apply e0|]. 
+    - iDestruct pred_start_unique_elem_of as "H"; [apply e0|]. 
       iDestruct "IH" as "(H' & H'')". iSpecialize ("H" with "H'").
       by iExFalso.
     - iDestruct "IH" as "(H & %H')". iFrame. iPureIntro.
       by apply NoDup_cons_2.
   Qed.
 
+  (* TODO(Ben): can omit is_seq on right side since right is then pure.. *)
   Lemma pred_unique {s e : loc} (L : list loc) : 
     is_seq s L e ⊢ is_seq s L e ∗ ⌜NoDup (s::L)⌝. 
   Proof.
     iIntros "H'". destruct (decide (s ∈ L)).
-    - iPoseProof (pred_start_unique_elem_of) as "H"; [apply e0|]. 
+    - iDestruct pred_start_unique_elem_of as "H"; [apply e0|]. 
       iSpecialize ("H" with "H'"). by iExFalso.
-    - iPoseProof (pred_list_unique with "H'") as "H". 
+    - iDestruct (pred_list_unique with "H'") as "H". 
       iDestruct "H" as "(H & %H)". iFrame. iPureIntro.
       by apply NoDup_cons_2.
   Qed.
+
+  Lemma pred_list_not_null {s e : loc} (L : list loc) : 
+    is_seq s L e ⊢ ⌜NULL ∉ L⌝.
+  Proof.
+    iInduction L as [|l L] forall (s); iIntros "H". 
+    { iPureIntro. apply not_elem_of_nil. }
+    rewrite pred_cons. iDestruct "H" as "[Hs H]".
+    rewrite not_elem_of_cons. iSplit; [|by iApply "IHL"].
+    destruct L; [by iApply pointsto_not_null|].
+    rewrite pred_cons. iDestruct "H" as "[Hl H]".
+    by iApply pointsto_not_null.
+  Qed.
+
+  Lemma pred_not_null {s e : loc} (L : list loc) : 
+    is_seq s L e ⊢ ⌜NULL ∉ (s::L)⌝.
+  Proof.
+    iIntros "H". 
+    iDestruct (pred_list_not_null with "H") as "%Hn".
+    rewrite not_elem_of_cons. iSplit; [|done].
+    destruct L; [by iApply pointsto_not_null|].
+    rewrite pred_cons. iDestruct "H" as "[Hl H]".
+    by iApply pointsto_not_null.
+  Qed.
   
   Lemma new_spec {s e: loc} {v} :
-    {{{ s ↦ v }}} 
+    [[{ s ↦ v }]] 
       new #s #e
-    {{{ RET #(); is_seq s [] e }}}.
+    [[{ RET #(); is_seq s [] e }]].
   Proof. iIntros (φ) "Hs Hphi". iUnfold new. wp_store. iApply "Hphi". by iFrame. Qed.
 
   Lemma push_spec {s l e: loc} (L: list loc) v :
-    {{{ l ↦ v ∗ is_seq s L e }}} 
+    [[{ l ↦ v ∗ is_seq s L e }]] 
       push #s #l
-    {{{ RET #(); is_seq s (l :: L) e }}}.
+    [[{ RET #(); is_seq s (l :: L) e }]].
   Proof. 
     iIntros (φ) "(Hl & Hs) Hphi". iUnfold push. wp_pures.
     destruct L; [|iDestruct "Hs" as "(Hs & His)"]; wp_load; 
@@ -122,9 +139,9 @@ Section seq.
   Qed.
 
   Lemma pop_spec {s e l: loc} (L: list loc) :
-    {{{ is_seq s (l :: L) e }}}
+    [[{ is_seq s (l :: L) e }]]
       pop #s
-    {{{ v, RET #l; l ↦ v ∗ is_seq s L e }}}.
+    [[{ v, RET #l; l ↦ v ∗ is_seq s L e }]].
   Proof. 
     iIntros (φ) "(Hs & His) Hphi". iUnfold pop. wp_load.
     destruct L; [|iDestruct "His" as "(Hl & His)"]; wp_load; 
@@ -132,9 +149,9 @@ Section seq.
   Qed.
 
   Lemma next_spec {s n e : loc} (L R: list loc) :
-    {{{ is_seq s L e }}}
+    [[{ is_seq s L e }]]
       next #s
-    {{{ RET #((L ++ [e]) !!! 0%nat : loc); is_seq s L e }}}.
+    [[{ RET #((L ++ [e]) !!! 0%nat : loc); is_seq s L e }]].
   Proof. 
     iIntros (φ) "His Hphi". iUnfold next. destruct L; 
     [|iDestruct "His" as "(Hs & His)"];  wp_load; iApply "Hphi"; 
@@ -142,9 +159,9 @@ Section seq.
   Qed.
 
   Lemma swap_spec {s1 s2 e1 e2 : loc} (L1 L2: list loc) : 
-    {{{ is_seq s1 L1 e1 ∗ is_seq s2 L2 e2 }}} 
+    [[{ is_seq s1 L1 e1 ∗ is_seq s2 L2 e2 }]] 
       swap #s1 #s2
-    {{{ RET #(); is_seq s1 L2 e2 ∗ is_seq s2 L1 e1 }}}.
+    [[{ RET #(); is_seq s1 L2 e2 ∗ is_seq s2 L1 e1 }]].
   Proof.
     iIntros (φ) "(Hs1 & Hs2) Hphi". iUnfold swap. wp_pures.
     destruct L1, L2; simpl; 

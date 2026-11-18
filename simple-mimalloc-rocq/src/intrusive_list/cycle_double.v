@@ -58,7 +58,7 @@ Section Dcycle.
     is_dcycle c L ⊢ is_dcycle c L ∗ ⌜NoDup (c::L)⌝. 
   Proof. 
     iIntros "(H1 & H2)".
-    iPoseProof (Cycle.pred_unique with "H1") as "(H1 & Hd)".
+    iDestruct (Cycle.pred_unique with "H1") as "(H1 & Hd)".
     iFrame.
   Qed.
 
@@ -67,13 +67,13 @@ Section Dcycle.
     is_dcycle s L ∗ is_dcycle s' L' ⊢ False.
   Proof.
     iIntros (HlL HlL') "((Hc1a & Hc1b) & (Hc2a & Hc2b))".
-    iPoseProof (Cycle.pred_unique_cycle with "[Hc1a Hc2a]") as "Hc1a"; 
+    iDestruct (Cycle.pred_unique_cycle with "[Hc1a Hc2a]") as "Hc1a"; 
     [apply HlL|apply HlL'|iFrame|done].
   Qed.
 
   Definition new : val := λ: "l",
-      Cycle.new ("l" + #0) ;;
-      Cycle.new ("l" + #1).
+    Cycle.new ("l" + #0) ;;
+    Cycle.new ("l" + #1).
 
   Definition is_empty : val := λ: "pos", 
     Cycle.is_empty ("pos" + #0).
@@ -85,30 +85,30 @@ Section Dcycle.
     (Cycle.next ("pos" + #1)) - #1.
 
   Definition insert_0 : val := λ: "pos" "new",
-      let: "next" := next "pos" in
-      Cycle.insert ("next" + #1) ("new" + #1) ;;
-      Cycle.insert ("pos" + #0) ("new" + #0).
+    let: "next" := next "pos" in
+    Cycle.insert ("next" + #1) ("new" + #1) ;;
+    Cycle.insert ("pos" + #0) ("new" + #0).
 
   Definition insert_1 : val := λ: "pos" "new",
-      let: "prev" := prev "pos" in
-      Cycle.insert ("prev" + #0) ("new" + #0) ;;
-      Cycle.insert ("pos"  + #1) ("new" + #1).
+    let: "prev" := prev "pos" in
+    Cycle.insert ("prev" + #0) ("new" + #0) ;;
+    Cycle.insert ("pos"  + #1) ("new" + #1).
 
   Definition remove_0 : val := λ: "pos",
-      let: "2next" := next (next "pos") in
-      let: "l0" := Cycle.remove ("pos" + #0) in
-      Cycle.remove ("2next" + #1) ;;
-      "l0".
+    let: "2next" := next (next "pos") in
+    let: "l0" := Cycle.remove ("pos" + #0) in
+    Cycle.remove ("2next" + #1) ;;
+    "l0".
 
   Definition remove_1 : val := λ: "pos",
-      let: "2prev" := prev (prev "pos") in
-      Cycle.remove ("pos"   + #1);;
-      Cycle.remove ("2prev" + #0).
+    let: "2prev" := prev (prev "pos") in
+    Cycle.remove ("pos"   + #1);;
+    Cycle.remove ("2prev" + #0).
 
   Lemma new_spec c v0 v1 :
-    {{{ c ↦∗ [v0 ; v1] }}}
+    [[{ c ↦∗ [v0 ; v1] }]]
       new #c
-    {{{ RET #(); is_dcycle c [] }}}.
+    [[{ RET #(); is_dcycle c [] }]].
   Proof. 
     iIntros (φ) "Hc Hphi". iUnfold new. wp_pures. 
     rewrite 2!array_cons. iDestruct "Hc" as "(Hn & Hp & _)".
@@ -118,9 +118,9 @@ Section Dcycle.
   Qed.
 
   Lemma is_empty_spec c L :
-    {{{ is_dcycle c L }}}
+    [[{ is_dcycle c L }]]
       is_empty #c
-    {{{ RET #(bool_decide (L = [])); is_dcycle c L }}}.
+    [[{ RET #(bool_decide (L = [])); is_dcycle c L }]].
   Proof. 
     iIntros (φ) "Hid Hphi". iUnfold is_empty. wp_pures. 
     iDestruct "Hid" as "(Hic1 & Hic2)". rewrite Z.add_0_r.
@@ -129,9 +129,9 @@ Section Dcycle.
   Qed.
 
   Lemma next_spec c (L: list loc) :
-    {{{ is_dcycle c L }}}
+    [[{ is_dcycle c L }]]
       next #c
-    {{{ RET #((L ++ [c]) !!! 0%nat : loc); is_dcycle c L }}}.
+    [[{ RET #((L ++ [c]) !!! 0%nat : loc); is_dcycle c L }]].
   Proof. 
     iIntros (φ) "(Hic1 & Hic2) Hphi". iUnfold next. 
     wp_pures. rewrite Z.add_0_r. wp_apply (Cycle.next_spec with "Hic1"). 
@@ -139,9 +139,9 @@ Section Dcycle.
   Qed.
 
   Lemma prev_spec c (L: list loc) :
-    {{{ is_dcycle c L }}}
+    [[{ is_dcycle c L }]]
       prev #c
-    {{{ RET #((reverse L ++ [c]) !!! 0%nat : loc); is_dcycle c L }}}.
+    [[{ RET #((reverse L ++ [c]) !!! 0%nat : loc); is_dcycle c L }]].
   Proof.
     iIntros (φ) "(Hic1 & Hic2) Hphi". iUnfold prev. wp_pures.
     wp_apply (Cycle.next_spec with "Hic2"). iIntros "Hic2".
@@ -155,9 +155,9 @@ Section Dcycle.
   Qed.
 
   Lemma insert_0_spec c l L v0 v1 :
-    {{{ l ↦∗ [v0 ; v1] ∗ is_dcycle c L }}}
+    [[{ l ↦∗ [v0 ; v1] ∗ is_dcycle c L }]]
       insert_0 #c #l
-    {{{ RET #(); is_dcycle c (l :: L) }}}.
+    [[{ RET #(); is_dcycle c (l :: L) }]].
   Proof.
     iIntros (φ) "(Hl & (Hic1 & Hic2)) Hphi". iUnfold insert_0.
     rewrite !array_cons array_nil. iDestruct "Hl" as "(Hl & Hl1 & _)".
@@ -178,9 +178,9 @@ Section Dcycle.
   Qed.
 
   Lemma insert_1_spec c l L v0 v1 :
-    {{{ l ↦∗ [v0 ; v1] ∗ is_dcycle c L }}}
+    [[{ l ↦∗ [v0 ; v1] ∗ is_dcycle c L }]]
       insert_1 #c #l
-    {{{ RET #(); is_dcycle c (L ++ [l]) }}}.
+    [[{ RET #(); is_dcycle c (L ++ [l]) }]].
   Proof.
     iIntros (φ) "(Hl & (Hic1 & Hic2)) Hphi". iUnfold insert_1.
     rewrite !array_cons array_nil. iDestruct "Hl" as "(Hl & Hl1 & _)".
@@ -205,9 +205,9 @@ Section Dcycle.
   Qed.
 
   Lemma remove_0_spec c l L :
-    {{{ is_dcycle c (l :: L) }}}
+    [[{ is_dcycle c (l :: L) }]]
       remove_0 #c
-    {{{ v0 v1, RET #l; is_dcycle c L ∗ l ↦∗ [v0; v1] }}}.
+    [[{ v0 v1, RET #l; is_dcycle c L ∗ l ↦∗ [v0; v1] }]].
   Proof.
     iIntros (φ) "(Hic1 & Hic2) Hphi". iUnfold remove_0. wp_pures.
     wp_apply (next_spec with "[Hic1 Hic2]"); [by iFrame|].
@@ -232,9 +232,9 @@ Section Dcycle.
   Qed.
 
   Lemma remove_1_spec c l L :
-    {{{ is_dcycle c (L ++ [l]) }}}
+    [[{ is_dcycle c (L ++ [l]) }]]
       remove_1 #c
-    {{{ v0 v1, RET #l; is_dcycle c L ∗ l ↦∗ [v0; v1] }}}.
+    [[{ v0 v1, RET #l; is_dcycle c L ∗ l ↦∗ [v0; v1] }]].
   Proof.
     iIntros (φ) "(Hic1 & Hic2) Hphi". iUnfold remove_1. wp_pures.
     wp_apply (prev_spec with "[Hic1 Hic2]"); [by iFrame|].

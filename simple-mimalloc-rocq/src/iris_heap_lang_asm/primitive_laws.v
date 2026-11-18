@@ -122,10 +122,6 @@ Implicit Types σ : state.
 Implicit Types v : val.
 Implicit Types l : loc.
 
-Lemma pointsto_gt_zero l dq v : 
-  l ↦dq v ⊢ ⌜(0 < l)%Z⌝.
-Proof. rewrite pointsto_unseal. by iIntros "[Hl Hl']". Qed.
-
 Lemma wp_lb_update s n E e Φ :
   TCEq (to_val e) None →
   steps_lb n -∗
@@ -269,6 +265,17 @@ Global Instance pointsto_combine_sep_gives l dq1 dq2 v1 v2 :
 Proof.
   rewrite pointsto_unseal /CombineSepGives. iIntros "[[H1 H1'] [H2 H2']]".
   iCombine "H1 H2" gives %[? [=->]]. eauto.
+Qed.
+
+Lemma pointsto_gt_zero l dq v : 
+  l ↦{dq} v ⊢ ⌜(0 < l)%Z⌝.
+Proof. rewrite pointsto_unseal. by iIntros "[Hl Hl']". Qed.
+
+Lemma pointsto_not_null l dq v : 
+  l ↦{dq} v ⊢ ⌜NULL ≠ l⌝.
+Proof. 
+  rewrite pointsto_unseal. iIntros "[Hl %Hl']". 
+  iPureIntro. rewrite /NULL. lia. 
 Qed.
 
 Lemma pointsto_combine l dq1 dq2 v1 v2 :

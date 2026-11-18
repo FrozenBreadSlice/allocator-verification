@@ -50,11 +50,11 @@ Section IList.
   Definition pop_back_hoare := DCycle.remove_1_spec.
 
   Lemma remove_hoare pl lr L1 L2 : 
-    {{{ DCycle.pred pl (L1 ++ [lr] ++ L2) }}}
+    [[{ DCycle.pred pl (L1 ++ [lr] ++ L2) }]]
       remove #pl #lr 
-    {{{ RET SOMEV #lr; 
+    [[{ RET SOMEV #lr; 
         lr ↦∗ [NONEV; NONEV] ∗ DCycle.pred pl (L1 ++ L2 )
-    }}}.
+    }]].
   Proof. 
     iInduction L1 as [|l L1 IH] forall (pl L2); simpl; 
     iIntros (φ) "Hpl Hphi"; iUnfold remove; wp_pures; 
@@ -66,7 +66,7 @@ Section IList.
       iIntros (v0 v1) "(Hpl & Hlr)". rewrite !array_cons array_nil. 
       iDestruct "Hlr" as "(Hlr1 & Hlr2 & _)". wp_store. wp_store. 
       wp_pures. iApply "Hphi". by iFrame. }
-    iPoseProof (pred_unique with "Hpl") as "(Hpl & %Hd)".
+    iDestruct (pred_unique with "Hpl") as "(Hpl & %Hd)".
     assert (l ≠ lr).
     { apply NoDup_cons in Hd as [_ Hd].
       apply NoDup_cons in Hd as [Hd _]. 
@@ -75,7 +75,7 @@ Section IList.
     case_bool_decide; [simplify_eq|]. 
     wp_pure. fold remove. iApply ("IH" with "[Hpl]").
     { rewrite DCycle.pred_rotate -app_assoc -app_comm_cons. auto. }
-    iNext. iIntros "(Hlr & Hl)". iApply "Hphi". 
+    iIntros "(Hlr & Hl)". iApply "Hphi". 
     rewrite DCycle.pred_rotate app_assoc. by iFrame. 
   Qed.
 

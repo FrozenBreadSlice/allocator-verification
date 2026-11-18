@@ -57,18 +57,18 @@ Section cycle.
   Definition remove : val := Seq.pop.
 
   Lemma new_spec c v :
-    {{{ c ↦ v }}}
+    [[{ c ↦ v }]]
       new #c
-    {{{ RET #(); is_cycle c [] }}}.
+    [[{ RET #(); is_cycle c [] }]].
   Proof.
     iIntros (φ) "Hc Hphi". iUnfold new. wp_pures. 
     by wp_apply (Seq.new_spec with "Hc"). 
   Qed.
 
   Lemma is_empty_spec c L :
-    {{{ is_cycle c L }}}
+    [[{ is_cycle c L }]]
       is_empty #c
-    {{{ RET #(bool_decide (L = [])); is_cycle c L }}}.
+    [[{ RET #(bool_decide (L = [])); is_cycle c L }]].
   Proof.
     iIntros (φ) "Hic Hphi". unfold is_empty. 
     unfold pred. destruct L as [| x L]; simpl.
@@ -78,33 +78,33 @@ Section cycle.
     wp_load. wp_pures. case_bool_decide; [simplify_eq|].
     iModIntro. destruct L; simpl. 
     - rewrite Seq.pred_nil. 
-      iPoseProof (pointsto_ne with "Hc Hic") as "%H". contradiction.
+      iDestruct (pointsto_ne with "Hc Hic") as "%H". contradiction.
     - rewrite Seq.pred_cons. iDestruct "Hic" as "(Hc' & Hic)".
-      iPoseProof (pointsto_ne with "Hc Hc'") as "%H". contradiction.
+      iDestruct (pointsto_ne with "Hc Hc'") as "%H". contradiction.
     - iApply "Hphi". by iFrame.
   Qed.
 
   Lemma next_spec c (L: list loc) :
-    {{{ is_cycle c L }}}
+    [[{ is_cycle c L }]]
       next #c
-    {{{ RET #((L ++ [c]) !!! 0%nat : loc); is_cycle c L }}}.
+    [[{ RET #((L ++ [c]) !!! 0%nat : loc); is_cycle c L }]].
   Proof.
     unshelve eapply Seq.next_spec; eauto.
   Qed.
 
   Lemma insert_spec {c l v} L :
-    {{{ l ↦ v ∗ is_cycle c L }}}
+    [[{ l ↦ v ∗ is_cycle c L }]]
       insert #c #l
-    {{{ RET #(); is_cycle c (l :: L) }}}.
+    [[{ RET #(); is_cycle c (l :: L) }]].
   Proof.
     iIntros (φ) "Hc Hphi".
     wp_apply (Seq.push_spec with "Hc"); done.
   Qed.
 
   Lemma remove_spec c l L :
-    {{{ is_cycle c (l :: L) }}}
+    [[{ is_cycle c (l :: L) }]]
       remove #c
-    {{{ v, RET #l; is_cycle c L ∗ l ↦ v }}}.
+    [[{ v, RET #l; is_cycle c L ∗ l ↦ v }]].
   Proof.
     iIntros (φ) "Hc Hphi".
     wp_apply (Seq.pop_spec with "Hc").  

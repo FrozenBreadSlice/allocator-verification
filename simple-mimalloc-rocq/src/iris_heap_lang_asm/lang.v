@@ -62,6 +62,7 @@ Delimit Scope expr_scope with E.
 Delimit Scope val_scope with V.
 
 Definition loc := Z.
+Definition NULL : loc := 0.
 
 Module heap_lang.
 

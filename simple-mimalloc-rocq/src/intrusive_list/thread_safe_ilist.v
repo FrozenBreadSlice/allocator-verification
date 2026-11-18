@@ -70,7 +70,8 @@ Section TSIList.
     iDestruct "H" as "[H1 H2]". wp_pures.
     wp_apply spin_lock.newlock_spec_delay_init; [done|].
     iIntros (lk γ) "H". wp_pures. rewrite Z.add_0_r. wp_store.
-    wp_pures. wp_apply (IList.new_hoare with "H2").
+    wp_pures. wp_bind (IList.new _). wp_apply twp_wp.
+    wp_apply (IList.new_hoare with "H2").
     iIntros "Hil". wp_pures. iApply "Hphi". iUnfold is_ts_ilist.
     iExists γ, lk. rewrite Z.add_0_r. 
     iMod (pointsto_persist with "H1") as "#H1".
@@ -86,6 +87,7 @@ Section TSIList.
     iUnfold is_empty. wp_pures. wp_load. wp_pures.
     wp_apply (spin_lock.acquire_spec with "Hlock").
     iIntros "(HLock & %L & Hp & Hq)". wp_pures.
+    wp_bind (IList.is_empty _). wp_apply twp_wp.
     wp_apply (IList.is_empty_hoare with "Hq").
     iIntros "Hq". wp_pures.
     wp_apply (spin_lock.release_spec with "[HLock Hp Hq]").
@@ -102,6 +104,7 @@ Section TSIList.
     iUnfold push_front. wp_pures. wp_load. wp_pures.
     wp_apply (spin_lock.acquire_spec with "Hlock").
     iIntros "(HLock & %L & Hp & Hq)". wp_pures.
+    wp_bind (IList.push_front _ _). wp_apply twp_wp.
     wp_apply (IList.push_front_hoare with "[Hq Hl]"); [iFrame|].
     iIntros "Hq". wp_pures.
     wp_apply (spin_lock.release_spec with "[HLock Hp Hq Hphil]").
@@ -123,6 +126,7 @@ Section TSIList.
     iUnfold pop_back. wp_pures. wp_load. wp_pures.
     wp_apply (spin_lock.acquire_spec with "Hlock").
     iIntros "(HLock & %L & Hp & Hq)". wp_pures.
+    wp_bind (IList.is_empty _). wp_apply twp_wp.
     wp_apply (IList.is_empty_hoare with "Hq"). iIntros "Hq".
     destruct (DCycle.list_nil_or_snoc L); simplify_eq; wp_pures.
     - wp_apply (spin_lock.release_spec with "[HLock Hp Hq]").
@@ -132,6 +136,7 @@ Section TSIList.
     - destruct H as (L' & x & H). case_bool_decide. 
       { simplify_eq. apply app_nil_r_inv in H0. inv H0. }
       wp_pures. rewrite H.
+    wp_bind (IList.pop_back _). wp_apply twp_wp.
       wp_apply (IList.pop_back_hoare with "Hq").
       iIntros (v0 v1) "[Hq Hl]". wp_pures.
       iDestruct (big_sepL_app with "Hp") as "[Hp [Hl' _]]".

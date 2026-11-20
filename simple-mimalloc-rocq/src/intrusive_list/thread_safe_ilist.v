@@ -39,11 +39,11 @@ Section TSIList.
     let: "q" := "tsq" + #f_queue in 
     spin_lock.acquire "lk" ;;
     if: IList.is_empty "q" 
-    then spin_lock.release "lk" ;; NONE
+    then spin_lock.release "lk" ;; #NULL 
     else
       let: "l" := IList.pop_back "q" in
       spin_lock.release "lk" ;; 
-      SOME "l".
+      "l".
 
   (* works as intrusive lists only if next pointer is at the top 
    other wise ϕ l for l ∈ L won't mean anything*)
@@ -115,11 +115,10 @@ Section TSIList.
   Lemma pop_back_hoare tsq ϕ :
     {{{ is_ts_ilist tsq ϕ }}}
       pop_back #tsq 
-    {{{ vret, RET vret;
-      (∃ l v0 v1, ⌜vret = SOMEV #l⌝ ∗ is_ts_ilist tsq ϕ ∗ 
-        l ↦∗ [v0; v1] ∗ ϕ l)
+    {{{ l, RET #l;
+      (∃ v0 v1, ⌜l ≠ NULL⌝ ∗ is_ts_ilist tsq ϕ ∗ l ↦∗ [v0; v1] ∗ ϕ l)
         ∨
-      (⌜vret = NONEV⌝ ∗ is_ts_ilist tsq ϕ)
+      (⌜l = NULL⌝ ∗ is_ts_ilist tsq ϕ)
     }}}.
   Proof.
     iIntros (φ) "(%γ & %lk & Hflock & #Hlock) Hphi".
@@ -142,8 +141,12 @@ Section TSIList.
       iDestruct (big_sepL_app with "Hp") as "[Hp [Hl' _]]".
       wp_apply (spin_lock.release_spec with "[HLock Hp Hq]").
       { iFrame. iSplitR; [iApply "Hlock"|]. iFrame. }
-      iIntros "_". wp_pures. iApply "Hphi". 
-      iLeft. iFrame. iSplitR; [done|]. auto.
+      iIntros "_". rewrite array_cons array_singleton. 
+      iDestruct "Hl" as "(Hl1 & Hl2)".
+      iDestruct (pointsto_not_null with "Hl1") as "%Hnl".
+      wp_pures. iApply "Hphi". 
+      iLeft. iFrame. iSplitR; [done|]. 
+      rewrite array_nil. auto.
   Qed.
 
 End TSIList.

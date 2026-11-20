@@ -61,13 +61,13 @@ Section DefEx.
       (* TODO(Ben): why the Z.of_nat necessary here and not elsewhere *)
       ([∗ list] i ∈ seq tree_size data_size, 
       ∃ v, (lt + (Z.of_nat i)) ↦ v) ∗
+      (* TODO(Ben): make arbitrary values.. *)
       if owns_next then (lt + f_next)%Z ↦∗ [LitV NULL; LitV NULL] 
       else True
     end.
 
-  (* TODO(Ben): does this work? probably depth = 1? + false? *)
-  Definition ts_queue_inv : loc → iProp Σ := 
-    λ l, (∃ γ, is_tree γ l 1 false)%I.
+  Definition tsq_inv γ : loc → iProp Σ := 
+    λ l, (∃ d, is_tree γ l d false ∗ ⌜0 < d⌝)%I.
   
   (* runtime functions *)
   Definition alloc_free_loop : val := rec: "rec" "al" "tsq" := 
@@ -81,28 +81,34 @@ Section DefEx.
     let: "tl" := !("lt" + #f_branch1) in
     let: "tr" := !("lt" + #f_branch2) in
     HAlloc.heap_free "lt" ;;
-    if: "tl" ≠ #NULL then TSIList.push_front "tsq" "tl" else #() ;;
-    if: "tr" ≠ #NULL then TSIList.push_front "tsq" "tr" else #().
+    (if: "tl" ≠ #NULL 
+     then TSIList.push_front "tsq" ("tl" + #f_next) 
+     else #()) ;;
+    if: "tr" ≠ #NULL 
+    then TSIList.push_front "tsq" ("tr" + #f_next) 
+    else #().
 
   Definition callback_loop : val := rec: "rec" "i" "max_free" "tsq" := 
-    if: "i" ≤ "max_free" then #()
+    if: "max_free" ≤ "i" then #()
     else 
-      match: TSIList.pop_back "tsq" with 
-        SOME "lt" =>  
-          callback_free "lt" "tsq" ;;
-          "rec" ("i" + #1) "max_free" "tsq"
-      | NONE     => #()
-      end. 
+      let: "l" := TSIList.pop_back "tsq" in 
+      if: "l" = #NULL then #() 
+      else
+        "l" <- #NULL ;;
+        ("l" + #1) <- #NULL ;;
+        callback_free "l" "tsq" ;;
+        "rec" ("i" + #1) "max_free" "tsq". 
 
   Definition runtime : val := λ: "_", 
-    let: "tsq" := TSIList.new #() in
     let: "al" := HAlloc.heap_new_alloc #() in  
+    let: "tsq" := TSIList.new #() in
     HAlloc.heap_register_callback "al" (λ: "_", 
       let: "max_free" := #100 in 
-      callback_loop #0 "tsq" 
+      callback_loop #0 "max_free" "tsq" 
     ) ;; 
     let: "tree" := make_pointer_tree "al" #10 in 
-    alloc_free_loop "tsq".
+    TSIList.push_front "tsq" ("tree" + #f_next) ;;
+    alloc_free_loop "al" "tsq".
 
   (* hoare triples *)
   Lemma new_tree_hoare γ al : 
@@ -168,8 +174,7 @@ Section DefEx.
     {{{ HAlloc.is_allocator γ al false ∗ TSIList.is_ts_ilist tsq ϕ }}}
       alloc_free_loop #al #tsq 
     {{{ RET #(); 
-      HAlloc.is_allocator γ al false ∗ 
-      TSIList.is_ts_ilist tsq ϕ 
+      HAlloc.is_allocator γ al false ∗ TSIList.is_ts_ilist tsq ϕ 
     }}}.
   Proof. 
     iLöb as "IH".
@@ -178,42 +183,129 @@ Section DefEx.
     wp_apply (TSIList.is_empty_hoare with "Htsq").
     iIntros (b) "Htsq". destruct b; wp_pures.
     { iApply "Hphi". by iFrame. }
-    wp_bind (HAlloc.heap_alloc _ _ ).
-    wp_apply (HAlloc.heap_alloc_hoare with "Hal").
-    wp_apply HAlloc.heap_alloc_hoare.  
-  Admitted.
-
-  (* TODO(Ben): now also takes tsq ... *)
-  Lemma callback_free_hoare γ l d al fo : 
-    {{{ HAlloc.is_allocator γ al fo ∗ is_tree γ l d ∗ ∃ v, l ↦ v }}}
-      callback_free #l
-    {{{ RET #(); 
-      HAlloc.is_allocator γ al fo
-      }}}.
-  Proof.
-    iIntros (φ) "(Hal & Ht & %v & Hl) Hphi". iUnfold callback_free.
-    wp_pures. wp_apply twp_wp.
-    iDestruct (is_tree_unfold with "Ht") as (lt1 lt2) 
-    "(Hvl & Hb1 & Hb2 & Hun & Hd)".
-    wp_apply (HAlloc.heap_free_hoare with "[Hal Hl Hb1 Hb2 Hun Hvl]").
-    - iFrame. admit.
-    - 
+    wp_apply (HAlloc.heap_alloc_hoare γ al 1 with "Hal").
+    iIntros (l) "[(%Hnl & %Hbs & Hun & Hvl & Hal)|(-> & %Hbs & Hal)]"; 
+    [|rewrite /HAlloc.BLOCK_SIZE in Hbs; lia]. wp_pures.
+    wp_bind (HAlloc.heap_free _). wp_apply twp_wp.
+    wp_apply (HAlloc.heap_free_hoare with "[$Hal $Hvl $Hun]").
+    iIntros "Hal". wp_pures.
+    by wp_apply ("IH" with "[$Hal $Htsq]").
   Qed.
 
-  (* we can't say anything stronger i think*)
-  Lemma callback_loop_hoare (i mf d : nat) (tsq : loc) 
-    (ϕ : loc → iProp Σ) : 
-    d = mf - i →  
-    {{{ TSIList.is_ts_ilist tsq ϕ }}} 
-      callback_loop #i #mf #tsq
-    {{{ RET #(); TSIList.is_ts_ilist tsq ϕ }}}.
-  Proof. Admitted.
+  Lemma callback_free_hoare γ l al d fo tsq : 
+    {{{ 
+      HAlloc.is_allocator γ al fo ∗ 
+      TSIList.is_ts_ilist tsq (tsq_inv γ) ∗
+      is_tree γ l (S d) true 
+    }}}
+      callback_free #l #tsq 
+    {{{ RET #(); 
+      HAlloc.is_allocator γ al fo ∗ 
+      TSIList.is_ts_ilist tsq (tsq_inv γ)
+    }}}.
+  Proof.
+    iIntros (φ) "(Hal & Htsq & Ht) Hphi". iUnfold callback_free.
+    wp_pures. destruct d. 
+    { iDestruct "Ht" as  (lt1 lt2) "(Hvl & Htl & Htr & 
+      -> & -> & Hd & Hl)".
+      wp_load. wp_load. wp_pures.
+      wp_bind (HAlloc.heap_free _). wp_apply twp_wp.
+      rewrite array_cons array_singleton.
+      iDestruct "Hl" as "[Hl1 Hl2]".
+      wp_apply (HAlloc.heap_free_hoare with 
+      "[$Hal Htl Htr Hd Hl1 Hl2 Hvl]").
+      - iFrame. rewrite /f_next Z.add_0_r. iFrame.
+      - iIntros "Hal". wp_pures. iApply "Hphi". auto. }
+    iDestruct "Ht" as (lt1 lt2) "(Hvl & Htl & Htr & 
+    H1 & H2 & Hd & Hl)". fold is_tree.
+    wp_load. wp_load. wp_pures.
+    wp_bind (HAlloc.heap_free _). wp_apply twp_wp.
+    iEval (rewrite array_cons array_singleton) in "Hl".
+    iDestruct "Hl" as "[Hl1 Hl2]".
+    wp_apply (HAlloc.heap_free_hoare with 
+    "[$Hal Htl Htr Hd Hl1 Hl2 Hvl]").
+    { iFrame. rewrite /f_next Z.add_0_r. iFrame. }
+    iIntros "Hal". wp_pures. 
+    iDestruct "H1" as (lt1l lt2l) "(Hvll & Htll & Htrl & 
+    H1l & H2l & Hdl & Hll)".
+    case_bool_decide. 
+    { iEval (rewrite array_cons array_singleton) in "Hll". 
+      iDestruct "Hll" as "[Hll1 Hll2]".
+      iDestruct (pointsto_not_null with "Hll1") as "%Hln".
+      rewrite /f_next Z.add_0_r in Hln. simplify_eq. }
+    wp_pures. 
+    wp_apply (TSIList.push_front_hoare with 
+    "[$Htsq Hvll Htll Htrl H1l H2l Hdl $Hll]").
+    { iUnfold tsq_inv. iExists (S d). iSplitL; [|iPureIntro; lia].
+      iExists lt1l, lt2l. iFrame. rewrite /f_next Z.add_0_r. iFrame. }
+    iIntros "Htsq". wp_pures. 
+    iDestruct "H2" as (lt1r lt2r) "(Hvlr & Htlr & Htrr & 
+    H1r & H2r & Hdr & Hlr)".
+    case_bool_decide. 
+    { iEval (rewrite array_cons array_singleton) in "Hlr". 
+      iDestruct "Hlr" as "[Hlr1 Hlr2]".
+      iDestruct (pointsto_not_null with "Hlr1") as "%Hln".
+      rewrite /f_next Z.add_0_r in Hln. simplify_eq. }
+    wp_pures.
+    wp_apply (TSIList.push_front_hoare with 
+    "[$Htsq Hvlr Htlr Htrr H1r H2r Hdr $Hlr]").
+    { iUnfold tsq_inv. iExists (S d). iSplitL; [|iPureIntro; lia].
+      iExists lt1r, lt2r. iFrame. rewrite /f_next Z.add_0_r. iFrame. }
+    iIntros "Htsq". iApply "Hphi". auto.
+  Qed.
 
-  (* make more meaningfull? *)
+  Lemma callback_loop_hoare γ i mf d fo tsq al : 
+    d = mf - i →  
+    {{{ 
+      HAlloc.is_allocator γ al fo ∗ TSIList.is_ts_ilist tsq (tsq_inv γ) 
+    }}} 
+      callback_loop #i #mf #tsq
+    {{{ RET #(); 
+      HAlloc.is_allocator γ al fo ∗TSIList.is_ts_ilist tsq (tsq_inv γ)
+    }}}.
+  Proof.
+    iInduction d as [|d IH] forall (i); simpl; 
+    iIntros (Hd φ) "[Hal Htsq] Hphi"; iUnfold callback_loop; wp_pures.
+    { case_bool_decide; [|lia]. wp_pures. iApply "Hphi". auto. }
+    case_bool_decide; wp_pures; [iApply "Hphi"; auto|].
+    wp_apply (TSIList.pop_back_hoare with "Htsq").
+    iIntros (l) "[(%v1 & %v2 & %Hnl & Htsq & Hl & Hinv)|(-> & Htsq)]";
+    wp_pures; [|iApply "Hphi"; auto].
+    case_bool_decide; [simplify_eq|]. wp_pures. fold callback_loop.
+    rewrite array_cons array_singleton. iDestruct "Hl" as "[Hl1 Hl2]".
+    wp_store. wp_store. 
+    rewrite /tsq_inv.  iDestruct "Hinv" as (d') "[Ht %Hd']".
+    destruct d'; [lia|].
+    wp_apply (callback_free_hoare with "[$Hal $Htsq Ht Hl1 Hl2]").
+    { iDestruct "Ht" as (lt1 lt2) "(H1 & H2 & H3 & H4 & H5 & H6 & _)".
+      iUnfold is_tree. fold is_tree. iExists lt1, lt2. 
+      rewrite array_cons array_singleton /f_next Z.add_0_r. iFrame. }
+    iIntros "[Hal Htsq]". wp_pures.
+    replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+    wp_apply ("IH" with "[] [$Hal $Htsq]"); [iPureIntro; lia|].
+    iIntros "[Hal Htsq]". iApply "Hphi". auto.
+  Qed.
+
   Lemma runtime_hoare : 
     {{{ True }}}
       runtime #() 
     {{{ RET #(); True }}}.
-  Proof. Admitted.
+  Proof.
+    iIntros (φ) "_ Hphi". iUnfold runtime. wp_pures.
+    wp_bind (HAlloc.heap_new_alloc _). wp_apply twp_wp.
+    wp_apply (HAlloc.heap_new_alloc_hoare); [done|].
+    iIntros (al) "[%γ Hal]". wp_pures.
+    wp_apply (TSIList.new_hoare (tsq_inv γ)); [done|].
+    iIntros (tsq) "#Htsq". wp_pures.
+    wp_bind (HAlloc.heap_register_callback _ _). wp_apply twp_wp.
+    wp_apply (HAlloc.heap_register_callback_hoare with "[$Hal]").
+    - iIntros (φ'). iModIntro. iIntros "Hh Hphi". wp_pures. 
+      wp_apply (callback_loop_hoare γ 0 100 100 true tsq al 
+      with "[Hh]"); [done|iFrame "Htsq Hh"|].
+      iIntros "[[Hh _] _]". by iApply "Hphi". 
+    - iIntros "Hal". wp_pures.
+      wp_apply (make_pointer_tree_hoare al γ 10 with "Hal").
+      iIntros (l) "[Hal Ht]". wp_pures. wp_let.
+  Qed.
 
 End DefEx.

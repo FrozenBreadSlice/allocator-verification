@@ -230,7 +230,7 @@ Module HAlloc. Section HAlloc.
   Qed.
      
   Lemma heap_new_alloc_hoare :
-    [[{ emp }]]
+    [[{ True }]]
       heap_new_alloc #() 
     [[{ al, RET #al; ∃ γ, is_allocator γ al false }]].
   Proof. 
@@ -251,17 +251,17 @@ Module HAlloc. Section HAlloc.
     { iPureIntro. set_solver. } auto.
   Qed.
  
-  Lemma heap_register_callback_hoare γ al f : 
+  Lemma heap_register_callback_hoare γ al (f : val) : 
     [[{ is_allocator γ al false ∗ 
-      {{{ is_heap γ al }}} #f #() {{{ RET #(); is_heap γ al }}} 
+      {{{ is_heap γ al }}} f #() {{{ RET #(); is_heap γ al }}} 
     }]]
-      heap_register_callback #al #f
+      heap_register_callback #al f
     [[{ RET #(); is_allocator γ al false }]].
   Proof. 
     iIntros (φ) "[[Hh Hf] H] Hphi". iUnfold heap_register_callback.
     iDestruct "Hf" as "[Hf | (%f' & Hf & Hwp)]";
     wp_store; iApply "Hphi"; iFrame; iRight;
-    iExists #f; iFrame; iModIntro; 
+    iExists f; iFrame; iModIntro; 
     iDestruct "H" as "#H"; iModIntro;
     iIntros "Hh"; iApply ("H" with "Hh"); iNext; auto.
   Qed.

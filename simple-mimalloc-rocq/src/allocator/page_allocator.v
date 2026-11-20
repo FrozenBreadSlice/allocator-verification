@@ -252,7 +252,7 @@ Module PAlloc. Section PAlloc.
           is_valid_lock_pure al l bs res
     }]]
       freelist_free_rec #l #bs
-    [[{ RET #(); emp }]].
+    [[{ RET #(); True }]].
   Proof.
     iInduction L as [|l' L IH] forall (l); simpl; 
     iIntros (φ) "(%Hbs & H) Hphi"; iUnfold freelist_free_rec; wp_pures.
@@ -276,7 +276,7 @@ Module PAlloc. Section PAlloc.
   Local Lemma freelist_free_hoare fl al bs res size :
     [[{ ⌜0 < bs⌝ ∗ is_freelist al fl bs res size }]] 
       freelist_free #fl #bs
-    [[{ RET #(); emp }]].
+    [[{ RET #(); True }]].
   Proof.
     iIntros (φ) "(%Hbs & (%L & %Hlen & Hcy & HbL)) Hphi". 
     iUnfold freelist_free. destruct L; simpl in *; wp_pures.
@@ -327,7 +327,7 @@ Module PAlloc. Section PAlloc.
   Lemma page_dealloc_hoare al bs res : 
     [[{ is_page al bs res res }]] 
       page_dealloc #al
-    [[{ RET #(); emp }]].
+    [[{ RET #(); True }]].
   Proof.
     iIntros (φ) "(%cap & %ld & %s1 & %s2 & %Hal & %Hr & %Hbs &
     %Hcr & -> & %Hfbs & Hcap & Hres & Hbs & Hfl & Hfl2 & Hun) Hphi".

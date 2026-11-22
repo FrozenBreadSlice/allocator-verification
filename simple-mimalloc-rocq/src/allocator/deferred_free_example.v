@@ -286,6 +286,20 @@ Section DefEx.
     iIntros "[Hal Htsq]". iApply "Hphi". auto.
   Qed.
 
+  (* TODO(Ben): move back and rename *)
+  Lemma tree_helper γ l d : 
+    is_tree γ l (S d) true ⊣⊢ 
+      is_tree γ l (S d) false ∗ 
+      (l + f_next)%Z ↦∗ [LitV NULL; LitV NULL].
+  Proof.
+    iSplit; iIntros "H".
+    - iDestruct "H" as (lt1 lt2) "(H1 & H2 & H3 & H4 & H5 & H6 & H7)". 
+      fold is_tree. iFrame "H7". iExists lt1, lt2. iFrame. 
+    - iDestruct "H" as "[H H']". 
+      iDestruct "H" as (lt1 lt2) "(H1 & H2 & H3 & H4 & H5 & H6 & _)".
+      fold is_tree. iFrame "H'". iExists lt1, lt2. iFrame. 
+  Qed.
+
   Lemma runtime_hoare : 
     {{{ True }}}
       runtime #() 
@@ -299,13 +313,27 @@ Section DefEx.
     iIntros (tsq) "#Htsq". wp_pures.
     wp_bind (HAlloc.heap_register_callback _ _). wp_apply twp_wp.
     wp_apply (HAlloc.heap_register_callback_hoare with "[$Hal]").
-    - iIntros (φ'). iModIntro. iIntros "Hh Hphi". wp_pures. 
+    - iIntros (φ'). iModIntro. iIntros "Hh Hphi". wp_pures.
       wp_apply (callback_loop_hoare γ 0 100 100 true tsq al 
       with "[Hh]"); [done|iFrame "Htsq Hh"|].
       iIntros "[[Hh _] _]". by iApply "Hphi". 
     - iIntros "Hal". wp_pures.
       wp_apply (make_pointer_tree_hoare al γ 10 with "Hal").
-      iIntros (l) "[Hal Ht]". wp_pures. wp_let.
+      iIntros (l) "[Hal Ht]". 
+      (*Set Typeclasses Debug. iClear "Ht".
+      iAssert (is_tree γ l 4 true) as "Ht".
+      + admit.
+      + wp_let.
+      *)
+      Local Opaque is_tree. wp_pures.
+      iDestruct (tree_helper with "Ht") as "[Ht Hn]".
+      wp_apply (TSIList.push_front_hoare 
+      _ _ _ _ (tsq_inv γ) with "[$Hn $Htsq Ht]"). 
+      { iExists 10. rewrite /f_next Z.add_0_r. 
+        iFrame "Ht". iPureIntro. lia. }
+      iIntros "_". wp_pures.
+      wp_apply (alloc_free_loop_hoare with "[$Htsq $Hal]").
+      iIntros "[Hal _]". by iApply "Hphi".
   Qed.
 
 End DefEx.
